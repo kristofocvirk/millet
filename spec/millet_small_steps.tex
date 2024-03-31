@@ -1,0 +1,113 @@
+\documentclass{article}
+
+% Language setting
+% Replace `english' with e.g. `spanish' to change the document language
+\usepackage[english]{babel}
+
+% Set page size and margins
+% Replace `letterpaper' with `a4paper' for UK/EU standard size
+\usepackage[letterpaper,top=2cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+\usepackage{proof}
+\usepackage{amssymb}
+
+% Useful packages
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+\title{Your Paper}
+\author{You}
+
+\begin{document}
+\maketitle
+
+\section{primitive operations}
+
+\subsection{int operations}
+
+\[\infer{ n_1+n_2 \leadsto \mathbf{return} n_1+n_2}{}\]
+
+\[\infer{ n_1-n_2 \leadsto \mathbf{return} n_1-n_2}{}\]
+
+\[\infer{ n_1*n_2 \leadsto \mathbf{return} n_1\cdot n_2}{}\]
+
+\[\infer{ n_1/n_2 \leadsto \mathbf{return} n_1/n_2}{}\]
+
+\[\infer{ n_1 \% n_2 \leadsto \mathbf{return} n_1\%n_2}{}\]
+
+\[\infer{ -n \leadsto \mathbf{return} -n}{} \]
+
+\subsection{float operations}
+
+\[\infer{ n_1+.n_2 \leadsto \mathbf{return} n_1+n_2}{}\]
+
+\[\infer{ n_1-.n_2 \leadsto \mathbf{return} n_1-n_2}{}\]
+
+\[\infer{ n_1*.n_2 \leadsto \mathbf{return} n_1\cdot n_2}{}\]
+
+\[\infer{ n_1/.n_2 \leadsto \mathbf{return} \frac{n_1}{n_2}}{}\]
+
+\[\infer{ n_1 \%. n_2 \leadsto \mathbf{return} n_1 \% n_2}{}\]
+
+\[\infer{ -.n \leadsto \mathbf{return} -n}{} \]
+
+\[\infer{ n_1 **\, n_2 \leadsto \mathbf{return} n_1^{n_2}}{}\]
+
+\subsection{bool operations}
+
+\[\infer{ n_1 < n_2 \leadsto \mathbf{true}}{n_1 < n_2}\]
+
+\[\infer{ n_1 < n_2 \leadsto \mathbf{false}}{n_1 \nless n_2}\]
+
+\[\infer{ n_1 > n_2 \leadsto \mathbf{true}}{n_1 > n_2}\]
+
+\[\infer{ n_1 > n_2 \leadsto \mathbf{false}}{n_1 \ngtr n_2}\]
+
+\[\infer{ n_1 <= n_2 \leadsto \mathbf{true}}{ n_1 \leq n_2}\]
+
+\[\infer{ n_1 <= n_2 \leadsto \mathbf{false}}{ n_1 \nleq n_2}\]
+
+\[\infer{ n_1 >= n_2 \leadsto \mathbf{true}}{ n_1 \geq n_2}\]
+
+\[\infer{ n_1 >= n_2 \leadsto \mathbf{false}}{ n_1 \ngeq n_2}\]
+
+\[\infer{ n_1 = n_2 \leadsto \mathbf{true}}{n_1 = n_2}\]
+
+\[\infer{ n_1 = n_2 \leadsto \mathbf{false}}{n_1 \neq n_2}\]
+
+\[\infer{ n_1 <> n_2 \leadsto \mathbf{true}}{n_1 \neq n_2}\]
+
+\[\infer{ n_1 <> n_2 \leadsto \mathbf{false}}{n_1 = n_2}\]
+
+\section{Functions and computations}
+
+\[\infer{ (\mathbf{fun}\,x \to T)V \leadsto T[V/x]}{}\]
+
+\[\infer{ (\mathbf{fun}\, f \,x = T)V \leadsto T[V/x]}{}\]
+
+\[\infer{ (\mathbf{rec}\, \mathbf{fun}\, f \,x = T)V \leadsto T[V/x,(\mathbf{rec} \, \mathbf{fun}\, f \,x = T)/f]}{}\]
+
+\[\infer{ \mathbf{fst} (V_1,V_2) \leadsto \mathbf{return} V_1}{}\]
+
+\[\infer{ \mathbf{snd} (V_1,V_2) \leadsto \mathbf{return} V_2}{}\]
+
+\[\infer{ xs\, @ \, ys \leadsto (@)\,\, xs \,\, ys}{}\]
+the append operation for lists is in the Millet standard library and is denoted with $(@)$ as is standard for ML style languages.
+
+\[\infer{ \mathbf{let} x = T_1 \mathbf{in} T_2 \leadsto  \mathbf{let} x = T_1' \mathbf{in} T_2}{T_1 \leadsto T_1'}\]
+
+\[\infer{ \mathbf{let} x = V \mathbf{in} T \leadsto T[V/x]}{}\]
+
+\[\infer{ \mathbf{match} [\,] \mathbf{with} [\,] \to T_1 | x::xs \to T_2 \leadsto T_1}{}\]
+
+\[\infer{ \mathbf{match} V_1::V_2 \mathbf{with} [\,] \to T_1 | x::xs \to T_2 \leadsto T_2[V_1/x, V_2/xs]}{}\]
+
+\[\infer{ \mathbf{match}\, \mathbf{inl} V \mathbf{with}\,\,\mathbf{inl} x_1 \to T_1 | \mathbf{inr} x_2 \to T_2 \leadsto T_1[V/x_1]}{}\]
+
+\[\infer{ \mathbf{match}\, \mathbf{inr} V \mathbf{with}\,\,\mathbf{inl} x_1 \to T_1 | \mathbf{inr} x_2 \to T_2 \leadsto T_2[V/x_2]}{}\]
+
+\[\infer{ \mathbf{if} \, \mathbf{true}\, \mathbf{then} T_1 \mathbf{else} T_2 \leadsto T_1}{}\]
+
+\[\infer{ \mathbf{if} \, \mathbf{true}\, \mathbf{then} T_1 \mathbf{else} T_2 \leadsto T_2}{}\]
+
+\end{document}

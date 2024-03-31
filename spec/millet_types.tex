@@ -1,0 +1,133 @@
+\documentclass{article}
+
+% Language setting
+% Replace `english' with e.g. `spanish' to change the document language
+\usepackage[english]{babel}
+
+% Set page size and margins
+% Replace `letterpaper' with `a4paper' for UK/EU standard size
+\usepackage[letterpaper,top=2cm,bottom=2cm,left=3cm,right=3cm,marginparwidth=1.75cm]{geometry}
+\usepackage{proof}
+\usepackage{amssymb}
+
+
+% Useful packages
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage[colorlinks=true, allcolors=blue]{hyperref}
+
+\title{Millet type inference}
+
+\begin{document}
+\maketitle
+\section{primitive values}
+\[\infer{\Gamma \vdash_v true:\mathbf{bool}}{} \]
+
+\[\infer{\Gamma \vdash_v false:\mathbf{bool}}{} \]
+
+\[\infer{\Gamma \vdash_v n:\mathbf{int}}{(n\in \mathbb{N})}\]
+
+\[\infer{\Gamma \vdash_v fl:\mathbf{float}}{(fl\in \mathbb{R})}\]
+
+\[\infer{\Gamma \vdash_v x:\mathbf{A}}{(x:A)\in \Gamma}\]
+
+\[\infer{\Gamma \vdash_v "ch*":\mathbf{string}}{(utf8(ch))}\]
+where $utf8()$ means that a character that can be encoded with the $\mathbf{utf}$-8 standard and $ch*$ stands for a possibly empty sequence of characters.
+
+\[\infer{\Gamma \vdash_v [\,]:\mathbf{list A}}{}\]
+
+\[\infer{\Gamma \vdash_c x::xs:\mathbf{list A}}{\Gamma \vdash_v x: \mathbf{A} \quad \Gamma \vdash_v xs: \mathbf{list A}}\]
+
+\[\infer{\Gamma \vdash_v (a,b):\mathbf{A * B}}{\Gamma \vdash_v a: \mathbf{A} \quad \Gamma \vdash_v b: \mathbf{B}}\]
+this is the type constructor for pair types, which are a special case of the product type. It should be noted that Millet also supports n-tuples.
+
+\[\infer{\Gamma \vdash_v \mathbf{inl}\, M:\mathbf{A + B}}{\Gamma \vdash_v M: \mathbf{A}}\]
+
+\[\infer{\Gamma \vdash_v \mathbf{inr}\, M:\mathbf{A + B}}{\Gamma \vdash_v M: \mathbf{B}}\]
+where $\mathbf{inr}$ and $\mathbf{inl}$ are aliases for the names defined with the $\mathbf{type}$ command. As with product types Millet supports variant types for an arbitrary number of variants.
+
+
+\section{primitive operations}
+
+\subsection{int operations}
+
+\[\infer{\Gamma \vdash_c n_1+n_2:\mathbf{int}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c n_1-n_2:\mathbf{int}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c n_1*n_2:\mathbf{int}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c n_1/n_2:\mathbf{int}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c n_1 \% n_2:\mathbf{int}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c -n:\mathbf{int}}{\Gamma \vdash_v n: \mathbf{int}} \]
+
+\subsection{float operations}
+
+\[\infer{\Gamma \vdash_c n_1+.n_2:\mathbf{float}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1-.n_2:\mathbf{float}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1*.n_2:\mathbf{float}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1/.n_2:\mathbf{float}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1 \%. n_2:\mathbf{float}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1 **\, n_2:\mathbf{float}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c -.n:\mathbf{float}}{\Gamma \vdash_v n: \mathbf{float}} \]
+
+\subsection{bool operations}
+
+\[\infer{\Gamma \vdash_c n_1 < n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c n_1 > n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c n_1 <= n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c n_1 >= n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{int} \quad \Gamma \vdash_v n_2: \mathbf{int}}\]
+
+\[\infer{\Gamma \vdash_c n_1 < n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1 > n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1 <= n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1 >= n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{float} \quad \Gamma \vdash_v n_2: \mathbf{float}}\]
+
+\[\infer{\Gamma \vdash_c n_1 = n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{A} \quad \Gamma \vdash_v n_2: \mathbf{A}}\]
+
+\[\infer{\Gamma \vdash_c n_1 <> n_2:\mathbf{bool}}{\Gamma \vdash_v n_1: \mathbf{A} \quad \Gamma \vdash_v n_2: \mathbf{A}}\]
+
+\section{Functions and computations}
+
+\[\infer{\Gamma \vdash_v \mathbf{fun}\,x \to T:\mathbf{A\to B}}{\Gamma,x:\mathbf{A} \vdash_c T: \mathbf{B}}\]
+Functions can be defined with an arbitrary number of arguments.
+
+\[\infer{\Gamma \vdash_v \mathbf{let}\,f x = T:\mathbf{A\to B}}{\Gamma,x:\mathbf{A} \vdash_c T: \mathbf{B}}\]
+Alternatively, functions can be defined with the $\mathbf{let} f = \mathbf{function} \dots$ syntax just like in Ocaml and is equivalent to writing $\mathbf{fun} f x = \mathbf{match} \,x\, \mathbf{with} \dots$
+
+\[\infer{\Gamma \vdash_v \mathbf{let} \, \mathbf{rec}\,f x = T:\mathbf{A\to B}}{\Gamma,f:A\to B,x:\mathbf{A} \vdash_c T: \mathbf{B}}\]
+
+\[\infer{\Gamma \vdash_c V_1V_2:\mathbf{B}}{\Gamma \vdash_v V_1: \mathbf{A\to B} \quad \Gamma \vdash_v V_2:\mathbf{A}}\]
+
+\[\infer{\Gamma \vdash_c \mathbf{fst} V:\mathbf{A}}{\Gamma \vdash_v A*B}\]
+
+\[\infer{\Gamma \vdash_c \mathbf{snd} V:\mathbf{B}}{\Gamma \vdash_v A*B}\]
+
+\[\infer{\Gamma \vdash_c xs @ xss:\mathbf{list A}}{\Gamma \vdash_v xs: \mathbf{list A} \quad \Gamma \vdash_v xss: \mathbf{list A}}\]
+
+\[\infer{\Gamma \vdash_c \mathbf{let} x = T_1 \mathbf{in} T_2:\mathbf{B}}{\Gamma \vdash_c T_1: \mathbf{A} \quad \Gamma, x:\mathbf{A} \vdash_c T_2: \mathbf{B}}\]
+
+\[\infer{\Gamma \vdash_c \mathbf{match} V \mathbf{with} [\,] \to T_1 | x::xs \to T_2 :\mathbf{B}}{\Gamma \vdash_v V: \mathbf{list A} \quad \Gamma \vdash_c T_1: \mathbf{B} \quad \Gamma,x:\mathbf{A}, xs:\mathbf{list A} \vdash_c T_2: \mathbf{B}}\]
+
+\[\infer{\Gamma \vdash_c \mathbf{match} V \mathbf{with}\,\,\mathbf{inl} x_1 \to T_1 | \mathbf{inr} x_2 \to T_2 :\mathbf{B}}{\Gamma \vdash_v V: \mathbf{A_1 + A_2} \quad \Gamma, x_1:\mathbf{A_1} \vdash_c T_1: \mathbf{B} \quad \Gamma, x_2:\mathbf{A_2} \vdash_c T_2: \mathbf{B}}\]
+This is a special case of the match statement for variant types where the given type only has two variants, however Millet supports variant types with an arbitrary number of variants.
+
+\[\infer{\Gamma \vdash_c \mathbf{if} V \mathbf{then} T_1 \mathbf{else} T_2:\mathbf{B}}{\Gamma \vdash_v V: \mathbf{bool} \quad \Gamma \vdash_c T_1: \mathbf{B}\quad \Gamma \vdash_c T_2: \mathbf{B}}\]
+
+\[\infer{\Gamma \vdash_c \mathbf{return}V:\mathbf{A}}{\Gamma \vdash_v V: \mathbf{A}}\]
+
+\end{document}
