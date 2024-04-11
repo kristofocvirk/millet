@@ -1,6 +1,6 @@
 (executable
  (name web)
- (libraries webInterpreter loader)
+ (libraries webInterpreter loader vdom)
  (modes js)
  (link_flags -no-check-prims)
  (promote
