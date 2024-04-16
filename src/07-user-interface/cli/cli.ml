@@ -1,13 +1,14 @@
 open Utils
 module Ast = Language.Ast
+module Compiler = Compiler
 module Backend = CliInterpreter
 module Loader = Loader.Loader (Backend)
 
-type config = { filenames : string list; use_stdlib : bool }
+type config = { filenames : string list; use_stdlib : bool ; compile : bool}
 
 let parse_args_to_config () =
-  let filenames = ref [] and use_stdlib = ref true in
-  let usage = "Run Millet as '" ^ Sys.argv.(0) ^ " [filename.mlt] ...'"
+  let filenames = ref [] and use_stdlib = ref true  and compile = ref false in
+  let usage = "Run Millet as '" ^ Sys.argv.(0) ^ Sys.argv.(1) ^" [filename.mlt] ...'"
   and anonymous filename = filenames := filename :: !filenames
   and options =
     Arg.align
@@ -15,10 +16,14 @@ let parse_args_to_config () =
         ( "--no-stdlib",
           Arg.Clear use_stdlib,
           " Do not load the standard library" );
+        ( "--compile",
+          Arg.Set compile,
+          " Compile the given programs"
+        )
       ]
   in
   Arg.parse options anonymous usage;
-  { filenames = List.rev !filenames; use_stdlib = !use_stdlib }
+  { filenames = List.rev !filenames; use_stdlib = !use_stdlib ; compile = !compile}
 
 let rec run (state : Backend.run_state) =
   Backend.view_run_state state;
@@ -34,14 +39,28 @@ let main () =
   let config = parse_args_to_config () in
   try
     Random.self_init ();
-    let state =
-      if config.use_stdlib then
-        Loader.load_source Loader.initial_state Loader.stdlib_source
-      else Loader.initial_state
-    in
-    let state' = List.fold_left Loader.load_file state config.filenames in
-    let run_state = Backend.run state'.backend in
-    run run_state
+    let conf_pair = (config.use_stdlib, config.compile) in
+    match conf_pair with 
+    | (true,false) ->
+      (let state = Loader.load_source Loader.initial_state Loader.stdlib_source
+      in
+      let state' = List.fold_left Loader.load_file state config.filenames in
+      let run_state = Backend.run state'.backend in
+      run run_state)
+    | (true, true) ->
+      (let state = Loader.load_source Loader.initial_state Loader.stdlib_source
+      in
+      let state' = List.fold_left Loader.load_file state config.filenames in
+      let run_state = Backend.run state'.backend in
+      Compiler.compile run_state)
+    | (false, true) -> 
+      (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
+      let run_state = Backend.run state'.backend in
+      Compiler.compile run_state)
+    | (false, false) -> 
+      (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
+      let run_state = Backend.run state'.backend in
+      run run_state)
   with Error.Error error ->
     Error.print error;
     exit 1
