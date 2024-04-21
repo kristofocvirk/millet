@@ -1,6 +1,5 @@
 open Utils
 module Ast = Language.Ast
-module Compiler = Compiler
 module Backend = CliInterpreter
 module Loader = Loader.Loader (Backend)
 
@@ -52,11 +51,11 @@ let main () =
       in
       let state' = List.fold_left Loader.load_file state config.filenames in
       let run_state = Backend.run state'.backend in
-      Compiler.compile run_state)
+      Backend.compile run_state)
     | (false, true) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
       let run_state = Backend.run state'.backend in
-      Compiler.compile run_state)
+      Backend.compile run_state)
     | (false, false) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
       let run_state = Backend.run state'.backend in

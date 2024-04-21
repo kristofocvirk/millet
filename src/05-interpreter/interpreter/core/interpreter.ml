@@ -271,3 +271,64 @@ let steps = function
               (fun () -> { computations = comp' () :: comps; environment });
           })
         (step_computation environment comp)
+
+
+let compile_expression exp = 
+  match exp with
+  | Ast.Var x -> Ast.Variable.print x Format.str_formatter; Format.flush_str_formatter () |> print_endline ; print_endline "var"
+  | Ast.Const (Const.Integer i) -> print_int i; print_endline "" 
+  | Ast.Const (Const.String s) -> print_string s 
+  | Ast.Const (Const.Float f) -> print_float f 
+  | Ast.Const (Const.Boolean b) -> ignore b 
+  | Ast.Annotated (expr, ty) -> ignore (expr,ty); print_endline "annotated"
+  | Ast.Tuple exprs -> ignore exprs; print_endline "tuple"
+  | Ast.Variant (label, expr) -> ignore (label,expr); print_endline "variant"
+  | Ast.Lambda abs -> ignore abs; print_endline "lambda"
+  | Ast.RecLambda (x, abs) -> ignore (x,abs); print_endline "rec lambda"
+
+
+
+let rec compile_computation comp = 
+  match comp with
+  | Ast.Return e -> ignore e; print_endline "return" 
+  | Ast.Do (c1, c2) -> print_endline "do"; compile_computation c1; print_endline "this"; compile_abstraction c2
+  | Ast.Apply (e1, e2) -> print_endline "apply"; compile_expression e1 ; compile_expression e2
+  | Ast.Match (_,_) -> print_endline "match" 
+
+and print_comps = function
+  | [] -> () 
+  | comp :: comps -> 
+    compile_computation comp;
+    print_endline "";
+    print_comps comps
+
+and compile_abstraction (abs : Ast.abstraction) = 
+  match abs with 
+  | (pat, comp) -> print_endline "pat"; compile_pattern pat; compile_computation comp
+
+and compile_pattern pat = 
+  match pat with
+  | PVar x -> ignore x
+  | PAs (p, x) -> ignore (p,x)
+  | PAnnotated (p, _ty) -> ignore (p, _ty)
+  | PConst c -> ignore c 
+  | PTuple lst -> ignore lst 
+  | PVariant (lbl, p) -> ignore (lbl,p) 
+  | PNonbinding -> ()
+
+
+
+
+let compile = function 
+  | { computations = []; _ } -> print_endline "wasm_unit"
+  | { computations = Ast.Return x :: comps; environment } ->
+    ignore environment;
+    Ast.print_expression ~max_level:0 x Format.std_formatter;
+    print_endline "";
+    print_comps comps 
+  | { computations = comp :: comps; environment } ->
+    print_endline "here";
+    environment |> ignore;
+    Ast.print_computation ~max_level:0 comp Format.std_formatter;
+    print_endline "";
+    print_comps comps 

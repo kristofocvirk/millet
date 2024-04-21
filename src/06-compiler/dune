@@ -1,3 +1,3 @@
 (library
  (name compiler)
- (libraries language binaryen))
+ (libraries language binaryen cliInterpreter loader))

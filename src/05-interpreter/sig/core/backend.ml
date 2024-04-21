@@ -22,4 +22,6 @@ module type S = sig
 
   val run : load_state -> run_state
   val steps : run_state -> step list
+  
+  val compile : run_state -> unit
 end
