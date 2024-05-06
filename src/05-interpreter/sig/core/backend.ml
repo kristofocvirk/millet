@@ -1,4 +1,5 @@
 module Ast = Language.Ast
+module Typ = Typechecker
 
 module type S = sig
   type load_state
@@ -23,5 +24,5 @@ module type S = sig
   val run : load_state -> run_state
   val steps : run_state -> step list
   
-  val compile : run_state -> unit
+  val compile : run_state -> Typ.state -> unit
 end
