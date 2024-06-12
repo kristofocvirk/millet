@@ -51,11 +51,11 @@ let main () =
       in
       let state' = List.fold_left Loader.load_file state config.filenames in
       let run_state = Backend.run state'.backend in
-      Backend.compile run_state state'.typechecker)
+      Backend.compile run_state)
     | (false, true) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
       let run_state = Backend.run state'.backend in
-      Backend.compile run_state state'.typechecker)
+      Backend.compile run_state)
     | (false, false) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
       let run_state = Backend.run state'.backend in

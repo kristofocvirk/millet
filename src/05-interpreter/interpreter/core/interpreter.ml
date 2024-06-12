@@ -3,6 +3,8 @@ module Ast = Language.Ast
 module Const = Language.Const
 module Typ = Typechecker
 
+
+
 type environment = {
   variables : Ast.expression Ast.VariableMap.t;
   builtin_functions : (Ast.expression -> Ast.computation) Ast.VariableMap.t;
@@ -182,6 +184,7 @@ let step_in_context step env redCtx ctx term =
   let terms' = step env term in
   List.map (fun (red, term') -> (redCtx red, fun () -> ctx (term' ()))) terms'
 
+
 let rec step_computation env = function
   | Ast.Return _ -> []
   | Ast.Match (expr, cases) ->
@@ -216,6 +219,7 @@ type load_state = {
   environment : environment;
   computations : Ast.computation list;
 }
+
 
 let initial_load_state =
   { environment = initial_environment; computations = [] }
@@ -275,70 +279,10 @@ let steps = function
 
 
 
-
-
-
-let rec compile_computation comp = 
-  match comp with
-  | Ast.Return e -> ignore e; print_endline "return" 
-  | Ast.Do (c1, c2) -> print_endline "do"; compile_computation c1; print_endline "this"; compile_abstraction c2
-  | Ast.Apply (e1, e2) -> print_endline "apply"; compile_expression e1 ; compile_expression e2
-  | Ast.Match (_,_) -> print_endline "match" 
-
-and print_comps = function
-  | [] -> () 
-  | comp :: comps -> 
-    compile_computation comp;
-    print_endline "";
-    print_comps comps
-
-and compile_abstraction (abs : Ast.abstraction) = 
-  match abs with 
-  | (pat, comp) -> print_endline "pat"; compile_pattern pat; compile_computation comp
-
-and compile_pattern pat = 
-  print_endline "print a pattern";
-  Ast.print_pattern pat Format.str_formatter; Format.flush_str_formatter () |> print_endline; 
-  match pat with
-  | PVar x -> ignore x
-  | PAs (p, x) -> ignore (p,x)
-  | PAnnotated (p, _ty) -> ignore (p, _ty)
-  | PConst c -> ignore c 
-  | PTuple lst -> ignore lst 
-  | PVariant (lbl, p) -> ignore (lbl,p) 
-  | PNonbinding -> ()
-
-and compile_expression exp = 
-  match exp with
-  | Ast.Var x -> Ast.Variable.print x Format.str_formatter; Format.flush_str_formatter () |> print_endline ; print_endline "var"
-  | Ast.Const (Const.Integer i) -> print_int i; print_endline "" 
-  | Ast.Const (Const.String s) -> print_string s; print_endline "" 
-  | Ast.Const (Const.Float f) -> print_float f ; print_endline "" 
-  | Ast.Const (Const.Boolean b) -> ignore b ; print_endline "" 
-  | Ast.Annotated (expr, ty) -> ignore (expr,ty); print_endline "annotated"
-  | Ast.Tuple exprs -> ignore exprs; print_endline "tuple"
-  | Ast.Variant (label, expr) -> ignore (label,expr); print_endline "variant"
-  | Ast.Lambda abs -> compile_abstraction abs; print_endline "lambda"
-  | Ast.RecLambda (x, abs) -> x |> ignore; compile_abstraction abs; print_endline "rec lambda"
-
-
-
-let compile run_state (typ_state : Typ.state) = 
+let compile run_state = 
   (match run_state with
   | { computations = []; _ } -> print_endline "wasm_unit"
   | { computations = Ast.Return x :: comps; environment } ->
-    Ast.VariableMap.iter (fun var func -> Ast.Variable.print var Format.str_formatter; Format.flush_str_formatter () |> print_endline; Ast.print_expression func Format.str_formatter; Format.flush_str_formatter () |> print_endline) environment.variables;
-    ignore (x,comps)
+    ignore (x, comps, environment)
   | { computations = comp :: comps; environment } ->
-    Ast.VariableMap.iter (fun var func -> Ast.Variable.print var Format.str_formatter; Format.flush_str_formatter () |> print_endline; Ast.print_expression func Format.str_formatter; Format.flush_str_formatter () |> print_endline) environment.variables;
-    ignore (comps, comp)
-  );
-  let print_param = Ast.new_print_param () in
-  Ast.VariableMap.iter (
-    fun var func -> Ast.Variable.print var Format.str_formatter;
-     Format.flush_str_formatter () 
-     |> print_endline; match func with (_,ty) -> Ast.print_ty (print_param) ty Format.str_formatter;
-      Format.flush_str_formatter () 
-      |> print_endline
-      ) typ_state.variables
-
+    ignore (comp, comps, environment);)
