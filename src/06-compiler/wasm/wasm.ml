@@ -1,13 +1,12 @@
 open Printf
 (* Value Types *)
-type value_type =
+type numeric_type = 
   | I32
   | I64
   | F32
   | F64
-  | RefType of ref_type
 
-and ref_type =
+type abs_heap_type =
   | FuncRef
   | ExternRef
   | EqRef
@@ -15,6 +14,14 @@ and ref_type =
   | DataRef
   | StructRef
   | ArrayRef
+
+type ref_type = 
+  | AbsHeapType of abs_heap_type
+  | HeapType of int
+
+type value_type =
+  | NumType of numeric_type
+  | RefType of ref_type 
 
 (* Heap Types *)
 type heap_type =
@@ -48,20 +55,33 @@ type func_type = {
   results : value_type list;
 }
 
+type comp_type =
+  | ArrayType of array_type
+  | FuncType of func_type 
+  | StructType of struct_type
+
 (* Instructions *)
 type instr =
   (* Constants *)
-  | Const of value_type * int32
+  | Const of numeric_type * int32
+  | LocalGet of int
   
   (* Arithmetic operations *)
-  | Add of value_type
-  | Sub of value_type
-  | Mul of value_type
-  | Div of value_type
+  | Add of numeric_type 
+  | Sub of numeric_type 
+  | Mul of numeric_type
+  | Div of numeric_type 
   
   (* Control flow *)
   | Call of int
   | Return
+  | If of instr list * instr list  (* (if (then ... ) (else ... )) *)
+  | Block of instr list  (* (block ... ) *)
+  | Loop of instr list   (* (loop ... ) *)
+  | Br of int            (* (br <label_index>) *)
+  | BrIf of int          (* (br_if <label_index>) *)
+  | BrTable of int list * int (* (br_table <labels> <default>) *)
+  | Unreachable          (* (unreachable) *)
   
   (* Struct operations *)
   | StructNew of struct_type
@@ -80,6 +100,7 @@ type instr =
 
 (* Function *)
 type func = {
+  name : string;
   ftype : func_type;
   locals : value_type list;
   body : instr list;
@@ -99,7 +120,7 @@ type export = {
 
 (* Module *)
 type module_ = {
-  types : func_type list;
+  types : comp_type list;
   funcs : func list;
   tables : table list;
   mems : mem list;
@@ -127,16 +148,9 @@ and global = {
   init : instr list;
 }
 
-
 (* Value Types *)
-let rec string_of_value_type = function
-  | I32 -> "i32"
-  | I64 -> "i64"
-  | F32 -> "f32"
-  | F64 -> "f64"
-  | RefType rt -> string_of_ref_type rt
 
-and string_of_ref_type = function
+let string_of_abs_heap_type = function
   | FuncRef -> "funcref"
   | ExternRef -> "externref"
   | EqRef -> "eqref"
@@ -144,6 +158,22 @@ and string_of_ref_type = function
   | DataRef -> "dataref"
   | StructRef -> "structref"
   | ArrayRef -> "arrayref"
+
+let string_of_ref_type = function
+  | AbsHeapType aht -> string_of_abs_heap_type aht
+  | HeapType ht -> string_of_int ht
+
+
+let string_of_numeric_type (num_typ : numeric_type) = 
+  match num_typ with
+  | I32 -> "i32"
+  | I64 -> "i64"
+  | F32 -> "f32"
+  | F64 -> "f64"
+
+let string_of_value_type = function
+  | NumType nt -> string_of_numeric_type nt
+  | RefType rt -> string_of_ref_type rt
 
 let string_of_heap_type = function
   | FuncHeapType -> "func"
@@ -174,35 +204,58 @@ let string_of_array_type (at : array_type) =
   let mutability = if at.mutable_ then "(mut " ^ string_of_value_type at.element_type ^ ")" else string_of_value_type at.element_type in
   sprintf "(array %s)" mutability
 
-(* Instructions *)
-let string_of_instr = function
-  | Const (vt, value) -> sprintf "(%s.const %ld)" (string_of_value_type vt) value
-  | Add vt -> sprintf "(%s.add)" (string_of_value_type vt)
-  | Sub vt -> sprintf "(%s.sub)" (string_of_value_type vt)
-  | Mul vt -> sprintf "(%s.mul)" (string_of_value_type vt)
-  | Div vt -> sprintf "(%s.div)" (string_of_value_type vt)
-  | Call index -> sprintf "(call %d)" index
-  | Return -> "(return)"
-  | StructNew st -> sprintf "(struct.new %s)" (string_of_struct_type st)
-  | StructGet (_, index) -> sprintf "(struct.get %d)" index
-  | StructSet (_, index) -> sprintf "(struct.set %d)" index
-  | ArrayNew at -> sprintf "(array.new %s)" (string_of_array_type at)
-  | ArrayGet _-> "(array.get)"
-  | ArraySet _ -> "(array.set)"
-  | RefNull ht -> sprintf "(ref.null %s)" (string_of_heap_type ht)
-  | RefIsNull -> "(ref.is_null)"
-  | RefFunc index -> sprintf "(ref.func %d)" index
+let string_of_comp_type = function 
+  | ArrayType at -> string_of_array_type at 
+  | StructType st -> string_of_struct_type st
+  | FuncType ft -> string_of_func_type ft
 
+(* Instructions *)
+let rec string_of_instr = function
+  | Const (vt, value) -> sprintf "%s.const %ld\n" (string_of_numeric_type vt) value
+  | LocalGet i -> sprintf "local.get %s\n" (string_of_int i)
+  | Add nt -> sprintf "%s.add\n" (string_of_numeric_type nt)
+  | Sub nt -> sprintf "%s.sub\n" (string_of_numeric_type nt)
+  | Mul nt -> sprintf "%s.mul\n" (string_of_numeric_type nt)
+  | Div nt -> sprintf "%s.div\n" (string_of_numeric_type nt)
+  | Call index -> sprintf "call %d\n" index
+  | Return -> "return\n"
+  | If (then_instrs, else_instrs) -> 
+      let then_part = String.concat "" (List.map string_of_instr then_instrs) in
+      let else_part = String.concat "" (List.map string_of_instr else_instrs) in
+      sprintf "(if\n(then\n%s)\n(else\n%s))\n" then_part else_part
+  | Block instrs ->
+      let body = String.concat "" (List.map string_of_instr instrs) in
+      sprintf "(block\n%s)\n" body
+  | Loop instrs ->
+      let body = String.concat "" (List.map string_of_instr instrs) in
+      sprintf "(loop\n%s)" body
+  | Br label_index -> sprintf "br %d\n" label_index
+  | BrIf label_index -> sprintf "br_if %d\n" label_index
+  | BrTable (labels, default) ->
+      let labels_str = String.concat " " (List.map string_of_int labels) in
+      sprintf "br_table %s %d\n" labels_str default
+  | Unreachable -> "unreachable\n"
+  | StructNew st -> sprintf "struct.new %s\n" (string_of_struct_type st)
+  | StructGet (_, index) -> sprintf "struct.get %d\n" index
+  | StructSet (_, index) -> sprintf "struct.set %d\n" index
+  | ArrayNew at -> sprintf "array.new %s\n" (string_of_array_type at)
+  | ArrayGet _-> "array.get\n"
+  | ArraySet _ -> "array.set\n"
+  | RefNull ht -> sprintf "ref.null %s\n" (string_of_heap_type ht)
+  | RefIsNull -> "ref.is_null\n"
+  | RefFunc index -> sprintf "ref.func %d\n" index
+  
 let string_of_instr_list instrs =
   String.concat " " (List.map string_of_instr instrs)
 
 (* Function *)
-let string_of_func f =
+let string_of_func (f : func) =
+  let name = f.name in
   let params = String.concat " " (List.map string_of_value_type f.ftype.params) in
   let results = String.concat " " (List.map string_of_value_type f.ftype.results) in
   let locals = String.concat " " (List.map string_of_value_type f.locals) in
   let body = string_of_instr_list f.body in
-  sprintf "(func (param %s) (result %s) (local %s) %s)" params results locals body
+  sprintf "(func $%s (param %s) (result %s) (local %s)\n %s)" name params results locals body
 
 (* Export *)
 let string_of_export_desc = function
@@ -235,11 +288,70 @@ let string_of_global g =
   sprintf "(global %s %s)" mutability init
 
 (* Module *)
+let append_if_non_empty str acc =
+  if str = "" then acc else acc ^ "\n" ^ str
+
 let string_of_module m =
-  let types = String.concat "\n" (List.map string_of_func_type m.types) in
+  let types = String.concat "\n" (List.map string_of_comp_type m.types) in
   let funcs = String.concat "\n" (List.map string_of_func m.funcs) in
   let tables = String.concat "\n" (List.map string_of_table m.tables) in
   let mems = String.concat "\n" (List.map string_of_mem m.mems) in
   let globals = String.concat "\n" (List.map string_of_global m.globals) in
   let exports = String.concat "\n" (List.map string_of_export m.exports) in
-  sprintf "(module\n%s\n%s\n%s\n%s\n%s\n%s)" types funcs tables mems globals exports
+  let module_body = ""
+    |> append_if_non_empty types
+    |> append_if_non_empty funcs
+    |> append_if_non_empty tables
+    |> append_if_non_empty mems
+    |> append_if_non_empty globals
+    |> append_if_non_empty exports
+  in
+  sprintf "(module %s)" module_body
+ 
+
+(* Example usage *)
+let example_module_1 = {
+  types = [FuncType {params = [NumType I32; NumType I32]; results = [NumType I32]}];
+  funcs = [{
+    name = "test";
+    ftype = {params = [NumType I32]; results = [NumType I32]};
+    locals = [NumType I32];
+    body = [LocalGet 0; Const (I32, 42l); Add I32; Return];
+  }];
+  tables = [];
+  mems = [];
+  globals = [];
+  exports = [{name = "add"; desc = FuncExport 0}];
+}
+
+let example_module_2 = {
+  types = [FuncType {params = [NumType I32; NumType I32]; results = [NumType I32]}];
+  funcs = [{
+    name = "test";
+    ftype = {params = [NumType I32; NumType I32]; results = [NumType I32]};
+    locals = [NumType I32];
+    body = [
+      Block [
+        If (
+          [Const (I32, 42l); Add I32],
+          [Const (I32, 1l); Sub I32]
+        );
+        Loop [
+          BrIf 0;
+          Br 1
+        ]
+      ];
+      Return
+    ];
+  }];
+  tables = [];
+  mems = [];
+  globals = [];
+  exports = [{name = "add"; desc = FuncExport 0}];
+}
+
+let () =
+  let wat = string_of_module example_module_2 in
+  print_endline wat;
+  let wat = string_of_module example_module_1 in
+  print_endline wat
