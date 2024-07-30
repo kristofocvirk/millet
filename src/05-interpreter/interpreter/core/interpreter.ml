@@ -1,7 +1,6 @@
 open Utils
 module Ast = Language.Ast
 module Const = Language.Const
-module Typ = Typechecker
 
 
 

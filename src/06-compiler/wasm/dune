@@ -1,2 +1,3 @@
 (library
- (name wasm))
+ (name wasm)
+ (libraries utils))

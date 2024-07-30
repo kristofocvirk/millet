@@ -280,3 +280,73 @@ let add_type_definitions state ty_defs =
 let load_primitive state x prim =
   let ty_sch = Primitives.primitive_type_scheme prim in
   add_external_function x ty_sch state
+
+let rec eq t1 t2 = 
+  t1 == t2 || 
+  match t1, t2 with 
+  | Ast.TyTuple tys1, Ast.TyTuple tys2 -> 
+    List.length tys1 = List.length tys2 && List.for_all2 eq tys1 tys2
+  | Ast.TyArrow (from1, to1), Ast.TyArrow (from2, to2) -> eq from1 from2 && eq to1 to2
+  | Ast.TyApply (name1, params1), Ast.TyApply (name2, params2) -> 
+    List.length params1 = List.length params2 && List.for_all2 eq params1 params2 && name1 == name2
+  | Ast.TyConst ty1, Ast.TyConst ty2 -> ty1 == ty2
+  | ty1, ty2 -> ty1 = ty2
+
+let (++) s1 s2 =
+  Ast.VariableMap.union (fun _ _ y2 -> Some y2)  s1 s2
+let (--) s1 s2 =
+  Ast.VariableMap.fold (fun x _ m1' -> Ast.VariableMap.remove x m1') s1 s2
+
+let empty = Ast.VariableMap.empty 
+
+let list f xs = List.fold_left (++) empty (List.map f xs)
+let val_var x t = Ast.VariableMap.singleton x t
+
+let rec bound_pat state p =
+  let pat_ty, _, _ = infer_pattern state p in
+  match p with
+  | Ast.PVar x -> val_var x pat_ty
+  | Ast.PAnnotated (pat, _) -> bound_pat state pat 
+  | Ast.PAs (_, var)-> val_var var pat_ty
+  | Ast.PTuple ps -> list (bound_pat state) ps 
+  | Ast.PVariant (_, pat) -> 
+    (match pat with 
+    | Some x -> bound_pat state x
+    | None -> empty)
+  | Ast.PConst _ | PNonbinding -> empty
+
+let rec free_pat p =
+  match p with
+  | Ast.PAnnotated (pat, _) -> free_pat pat
+  | PAs (pat, _) -> free_pat pat
+  | PTuple ps -> list free_pat ps
+  | PVariant (_, pat) ->
+    (match pat with
+    | Some x -> free_pat x
+    | None -> empty) 
+  | PConst _ | PNonbinding | PVar _ -> empty
+
+let rec free_exp state e =
+  match e with
+  | Ast.Var var -> 
+    let ty, _ = infer_expression state e in
+    val_var var ty
+  | Const _ -> empty 
+  | Annotated (exp, _) -> free_exp state exp 
+  | Tuple exps -> list (free_exp state) exps 
+  | Variant (_, exp) -> 
+    (match exp with 
+    | Some x -> free_exp state x
+    | None -> empty) 
+  | Lambda (pat, comp) -> ()
+  | RecLambda (var, (pat, comp)) -> ()
+
+and free_case (p, e) state =
+  free_exp state e -- bound_pat state p ++ free_pat p
+
+and free_comp c = 
+  match c with 
+  | Ast.Return exp -> ()
+  | Do (comp, abs) -> ()
+  | Match (exp, pes) -> ()
+  | Apply (e1, e2) -> ()

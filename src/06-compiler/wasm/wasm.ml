@@ -1,357 +1,534 @@
-open Printf
-(* Value Types *)
-type numeric_type = 
-  | I32
-  | I64
-  | F32
-  | F64
+open Utils
 
-type abs_heap_type =
-  | FuncRef
-  | ExternRef
-  | EqRef
-  | I31Ref
-  | DataRef
-  | StructRef
-  | ArrayRef
+(*pack*)
+type pack_size = Pack8 | Pack16 | Pack32 | Pack64
+type extension = SX | ZX
+let packed_size = function
+  | Pack8 -> 1
+  | Pack16 -> 2
+  | Pack32 -> 4
+  | Pack64 -> 8
 
-type ref_type = 
-  | AbsHeapType of abs_heap_type
-  | HeapType of int
+(*types*)
+type type_idx = int
+type local_idx = int
+type name = Utils.Utf8.unicode 
 
-type value_type =
-  | NumType of numeric_type
-  | RefType of ref_type 
+type var = StatX of type_idx | RecX of int 
 
-(* Heap Types *)
+type null = NoNull | Null
+type mut = Cons | Var
+type final = NoFinal | Final
+type init = Set | Unset
+type 'a limits = {min : 'a; max : 'a option}
+
+type num_type = I32T | I64T | F32T | F64T
+type vec_type = V128T
 type heap_type =
-  | FuncHeapType
-  | ExternHeapType
-  | EqHeapType
-  | I31HeapType
-  | DataHeapType
-  | StructHeapType
-  | ArrayHeapType
+  | AnyHT | NoneHT | EqHT | I31HT | StructHT | ArrayHT
+  | FuncHT | NoFuncHT
+  | ExternHT | NoExternHT
+  | VarHT of var
+  | DefHT of def_type
+  | BotHT
+and ref_type = null * heap_type
+and val_type = NumT of num_type | VecT of vec_type | RefT of ref_type | BotT
+and result_type = val_type list
+and instr_type = InstrT of result_type * result_type * local_idx list
 
-(* Struct Types *)
-type struct_field = {
-  field_type : value_type;
-  mutable_ : bool;  (* Indicates if the field is mutable *)
-}
+and storage_type = ValStorageT of val_type | PackStorageT of pack_size
+and field_type = FieldT of mut * storage_type
 
-type struct_type = {
-  fields : struct_field list;
-}
+and struct_type = StructT of field_type list
+and array_type = ArrayT of field_type
+and func_type = FuncT of result_type * result_type
 
-(* Array Types *)
-type array_type = {
-  element_type : value_type;
-  mutable_ : bool;  (* Indicates if the array elements are mutable *)
-}
+and str_type =
+  | DefStructT of struct_type
+  | DefArrayT of array_type
+  | DefFuncT of func_type
 
-(* Function Types *)
-type func_type = {
-  params : value_type list;
-  results : value_type list;
-}
+and sub_type = SubT of final * heap_type list * str_type
+and rec_type = RecT of sub_type list
+and def_type = DefT of rec_type * int
 
-type comp_type =
-  | ArrayType of array_type
-  | FuncType of func_type 
-  | StructType of struct_type
+type table_type = TableT of Int.t limits * ref_type
+type memory_type = MemoryT of Int.t limits
+type global_type = GlobalT of mut * val_type
+type local_type = LocalT of init * val_type
+type extern_type =
+  | ExternFuncT of def_type
+  | ExternTableT of table_type
+  | ExternMemoryT of memory_type
+  | ExternGlobalT of global_type
+
+type export_type = ExportT of extern_type * name
+type import_type = ImportT of extern_type * name * name
+type module_type = ModuleT of import_type list * export_type list
+
+type block_type = VarBlockType of int | ValBlockType of val_type option
+
+type initop = Explicit | Implicit
 
 (* Instructions *)
 type instr =
   (* Constants *)
-  | Const of numeric_type * int32
+  | IntConst of num_type * int
+  | FloatConst of num_type * float
   | LocalGet of int
+  | LocalSet of int
   
   (* Arithmetic operations *)
-  | Add of numeric_type 
-  | Sub of numeric_type 
-  | Mul of numeric_type
-  | Div of numeric_type 
+  | Add of num_type 
+  | Sub of num_type 
+  | Mul of num_type
+  | Div of num_type 
+  | Shl of num_type
+  | Shr of num_type
+  | Ne of num_type
   
   (* Control flow *)
   | Call of int
   | Return
-  | If of instr list * instr list  (* (if (then ... ) (else ... )) *)
-  | Block of instr list  (* (block ... ) *)
-  | Loop of instr list   (* (loop ... ) *)
+  | If of block_type * instr list * instr list  (* (if (then ... ) (else ... )) *)
+  | Block of block_type * instr list  (* (block ... ) *)
+  | Loop of block_type * instr list   (* (loop ... ) *)
   | Br of int            (* (br <label_index>) *)
   | BrIf of int          (* (br_if <label_index>) *)
   | BrTable of int list * int (* (br_table <labels> <default>) *)
   | Unreachable          (* (unreachable) *)
   
   (* Struct operations *)
-  | StructNew of struct_type
-  | StructGet of struct_type * int
-  | StructSet of struct_type * int
+  | StructNew of int * initop 
+  | StructGet of int * int * extension option 
+  | StructSet of int * int
+
+  (* globals *)
+  | GlobalGet of int
+  (* Parametric instucrions *)
+  | Drop
 
   (* Array operations *)
-  | ArrayNew of array_type
-  | ArrayGet of array_type
-  | ArraySet of array_type
-
+  | ArrayNew of int * initop 
+  | ArrayGet of int * extension option
+  | ArraySet of int 
   (* Reference types operations *)
+
   | RefNull of heap_type
+  | RefAsNonNull
+  | RefEq
   | RefIsNull
   | RefFunc of int
+  | RefI31 
+  | I31Get of extension
+  | RefCast of ref_type
+
+(*local*)
+type const = instr list
+
+type local = 
+{
+  ltype : val_type
+}
+
+and global =
+{
+  gtype : global_type;
+  ginit : const;
+}
+
 
 (* Function *)
 type func = {
-  name : string;
-  ftype : func_type;
-  locals : value_type list;
+  ftype : int; 
+  locals : local list;
   body : instr list;
 }
 
-(* Export *)
-type export_desc =
-  | FuncExport of int
-  | TableExport of int
-  | MemExport of int
-  | GlobalExport of int
+(* Tables & Memories *)
 
-type export = {
-  name : string;
-  desc : export_desc;
+type table =
+{
+  ttype : table_type;
+  tinit : const;
 }
 
-(* Module *)
-type module_ = {
-  types : comp_type list;
-  funcs : func list;
-  tables : table list;
-  mems : mem list;
+type memory =
+{
+  mtype : memory_type;
+}
+
+type segment_mode =
+  | Passive
+  | Active of {index : int; offset : const}
+  | Declarative
+
+type elem_segment =
+{
+  etype : ref_type;
+  einit : const list;
+  emode : segment_mode;
+}
+
+type data_segment =
+{
+  dinit : string;
+  dmode : segment_mode;
+}
+
+
+(* Modules *)
+
+type type_ = rec_type 
+
+type export_desc =
+  | FuncExport of int 
+  | TableExport of int
+  | MemoryExport of int  
+  | GlobalExport of int 
+
+type export =
+{
+  name : name;
+  edesc : export_desc;
+}
+
+type import_desc =
+  | FuncImport of int
+  | TableImport of table_type
+  | MemoryImport of memory_type
+  | GlobalImport of global_type
+
+type import =
+{
+  module_name : name;
+  item_name : name;
+  idesc : import_desc;
+}
+
+type start =
+{
+  sfunc : int;
+}
+
+type module_ =
+{
+  types : type_ list;
   globals : global list;
+  tables : table list;
+  memories : memory list;
+  funcs : func list;
+  start : start option;
+  elems : elem_segment list;
+  datas : data_segment list;
+  imports : import list;
   exports : export list;
 }
 
-(* Tables *)
-and table = {
-  element_type : ref_type;
-  initial_size : int;
-  max_size : int option;
+
+(* Auxiliary functions *)
+
+let empty_module =
+{
+  types = [];
+  globals = [];
+  tables = [];
+  memories = [];
+  funcs = [];
+  start = None;
+  elems = [];
+  datas = [];
+  imports = [];
+  exports = [];
 }
 
-(* Memory *)
-and mem = {
-  initial_pages : int;
-  max_pages : int option;
-}
+(* Helper function to convert num_type to string *)
+type sexpr = Atom of string | Node of string * sexpr list
 
-(* Global *)
-and global = {
-  global_type : value_type;
-  mutable_ : bool;
-  init : instr list;
-}
-
-(* Value Types *)
-
-let string_of_abs_heap_type = function
-  | FuncRef -> "funcref"
-  | ExternRef -> "externref"
-  | EqRef -> "eqref"
-  | I31Ref -> "i31ref"
-  | DataRef -> "dataref"
-  | StructRef -> "structref"
-  | ArrayRef -> "arrayref"
-
-let string_of_ref_type = function
-  | AbsHeapType aht -> string_of_abs_heap_type aht
-  | HeapType ht -> string_of_int ht
-
-
-let string_of_numeric_type (num_typ : numeric_type) = 
-  match num_typ with
-  | I32 -> "i32"
-  | I64 -> "i64"
-  | F32 -> "f32"
-  | F64 -> "f64"
-
-let string_of_value_type = function
-  | NumType nt -> string_of_numeric_type nt
-  | RefType rt -> string_of_ref_type rt
-
-let string_of_heap_type = function
-  | FuncHeapType -> "func"
-  | ExternHeapType -> "extern"
-  | EqHeapType -> "eq"
-  | I31HeapType -> "i31"
-  | DataHeapType -> "data"
-  | StructHeapType -> "struct"
-  | ArrayHeapType -> "array"
-
-(* Function Types *)
-let string_of_func_type ft =
-  let params = String.concat " " (List.map string_of_value_type ft.params) in
-  let results = String.concat " " (List.map string_of_value_type ft.results) in
-  sprintf "(func (param %s) (result %s))" params results
-
-(* Struct Types *)
-let string_of_struct_field (sf : struct_field) =
-  let mutability = if sf.mutable_ then "(mut " ^ string_of_value_type sf.field_type ^ ")" else string_of_value_type sf.field_type in
-  sprintf "(field %s)" mutability
-
-let string_of_struct_type st =
-  let fields = String.concat " " (List.map string_of_struct_field st.fields) in
-  sprintf "(struct %s)" fields
-
-(* Array Types *)
-let string_of_array_type (at : array_type) =
-  let mutability = if at.mutable_ then "(mut " ^ string_of_value_type at.element_type ^ ")" else string_of_value_type at.element_type in
-  sprintf "(array %s)" mutability
-
-let string_of_comp_type = function 
-  | ArrayType at -> string_of_array_type at 
-  | StructType st -> string_of_struct_type st
-  | FuncType ft -> string_of_func_type ft
-
-(* Instructions *)
-let rec string_of_instr = function
-  | Const (vt, value) -> sprintf "%s.const %ld\n" (string_of_numeric_type vt) value
-  | LocalGet i -> sprintf "local.get %s\n" (string_of_int i)
-  | Add nt -> sprintf "%s.add\n" (string_of_numeric_type nt)
-  | Sub nt -> sprintf "%s.sub\n" (string_of_numeric_type nt)
-  | Mul nt -> sprintf "%s.mul\n" (string_of_numeric_type nt)
-  | Div nt -> sprintf "%s.div\n" (string_of_numeric_type nt)
-  | Call index -> sprintf "call %d\n" index
-  | Return -> "return\n"
-  | If (then_instrs, else_instrs) -> 
-      let then_part = String.concat "" (List.map string_of_instr then_instrs) in
-      let else_part = String.concat "" (List.map string_of_instr else_instrs) in
-      sprintf "(if\n(then\n%s)\n(else\n%s))\n" then_part else_part
-  | Block instrs ->
-      let body = String.concat "" (List.map string_of_instr instrs) in
-      sprintf "(block\n%s)\n" body
-  | Loop instrs ->
-      let body = String.concat "" (List.map string_of_instr instrs) in
-      sprintf "(loop\n%s)" body
-  | Br label_index -> sprintf "br %d\n" label_index
-  | BrIf label_index -> sprintf "br_if %d\n" label_index
-  | BrTable (labels, default) ->
-      let labels_str = String.concat " " (List.map string_of_int labels) in
-      sprintf "br_table %s %d\n" labels_str default
-  | Unreachable -> "unreachable\n"
-  | StructNew st -> sprintf "struct.new %s\n" (string_of_struct_type st)
-  | StructGet (_, index) -> sprintf "struct.get %d\n" index
-  | StructSet (_, index) -> sprintf "struct.set %d\n" index
-  | ArrayNew at -> sprintf "array.new %s\n" (string_of_array_type at)
-  | ArrayGet _-> "array.get\n"
-  | ArraySet _ -> "array.set\n"
-  | RefNull ht -> sprintf "ref.null %s\n" (string_of_heap_type ht)
-  | RefIsNull -> "ref.is_null\n"
-  | RefFunc index -> sprintf "ref.func %d\n" index
-  
-let string_of_instr_list instrs =
-  String.concat " " (List.map string_of_instr instrs)
-
-(* Function *)
-let string_of_func (f : func) =
-  let name = f.name in
-  let params = String.concat " " (List.map string_of_value_type f.ftype.params) in
-  let results = String.concat " " (List.map string_of_value_type f.ftype.results) in
-  let locals = String.concat " " (List.map string_of_value_type f.locals) in
-  let body = string_of_instr_list f.body in
-  sprintf "(func $%s (param %s) (result %s) (local %s)\n %s)" name params results locals body
-
-(* Export *)
-let string_of_export_desc = function
-  | FuncExport index -> sprintf "(func %d)" index
-  | TableExport index -> sprintf "(table %d)" index
-  | MemExport index -> sprintf "(memory %d)" index
-  | GlobalExport index -> sprintf "(global %d)" index
-
-let string_of_export e =
-  sprintf "(export \"%s\" %s)" e.name (string_of_export_desc e.desc)
-
-(* Tables *)
-let string_of_table t =
-  let max_size = match t.max_size with
-    | Some max -> string_of_int max
-    | None -> "" in
-  sprintf "(table %d %s %s)" t.initial_size max_size (string_of_ref_type t.element_type)
-
-(* Memories *)
-let string_of_mem m =
-  let max_pages = match m.max_pages with
-    | Some max -> string_of_int max
-    | None -> "" in
-  sprintf "(memory %d %s)" m.initial_pages max_pages
-
-(* Globals *)
-let string_of_global g =
-  let mutability = if g.mutable_ then "(mut " ^ string_of_value_type g.global_type ^ ")" else string_of_value_type g.global_type in
-  let init = string_of_instr_list g.init in
-  sprintf "(global %s %s)" mutability init
-
-(* Module *)
-let append_if_non_empty str acc =
-  if str = "" then acc else acc ^ "\n" ^ str
-
-let string_of_module m =
-  let types = String.concat "\n" (List.map string_of_comp_type m.types) in
-  let funcs = String.concat "\n" (List.map string_of_func m.funcs) in
-  let tables = String.concat "\n" (List.map string_of_table m.tables) in
-  let mems = String.concat "\n" (List.map string_of_mem m.mems) in
-  let globals = String.concat "\n" (List.map string_of_global m.globals) in
-  let exports = String.concat "\n" (List.map string_of_export m.exports) in
-  let module_body = ""
-    |> append_if_non_empty types
-    |> append_if_non_empty funcs
-    |> append_if_non_empty tables
-    |> append_if_non_empty mems
-    |> append_if_non_empty globals
-    |> append_if_non_empty exports
+let string_of_name n =
+  let b = Buffer.create 16 in
+  let escape uc =
+    if uc < 0x20 || uc >= 0x7f then
+      Buffer.add_string b (Printf.sprintf "\\u{%02x}" uc)
+    else begin
+      let c = Char.chr uc in
+      if c = '\"' || c = '\\' then Buffer.add_char b '\\';
+      Buffer.add_char b c
+    end
   in
-  sprintf "(module %s)" module_body
- 
+  List.iter escape n;
+  Buffer.contents b
 
-(* Example usage *)
-let example_module_1 = {
-  types = [FuncType {params = [NumType I32; NumType I32]; results = [NumType I32]}];
-  funcs = [{
-    name = "test";
-    ftype = {params = [NumType I32]; results = [NumType I32]};
-    locals = [NumType I32];
-    body = [LocalGet 0; Const (I32, 42l); Add I32; Return];
-  }];
-  tables = [];
-  mems = [];
-  globals = [];
-  exports = [{name = "add"; desc = FuncExport 0}];
-}
+let string_of_var = function
+  | StatX x -> string_of_int x
+  | RecX x -> "rec." ^ string_of_int x
 
-let example_module_2 = {
-  types = [FuncType {params = [NumType I32; NumType I32]; results = [NumType I32]}];
-  funcs = [{
-    name = "test";
-    ftype = {params = [NumType I32; NumType I32]; results = [NumType I32]};
-    locals = [NumType I32];
-    body = [
-      Block [
-        If (
-          [Const (I32, 42l); Add I32],
-          [Const (I32, 1l); Sub I32]
-        );
-        Loop [
-          BrIf 0;
-          Br 1
-        ]
-      ];
-      Return
-    ];
-  }];
-  tables = [];
-  mems = [];
-  globals = [];
-  exports = [{name = "add"; desc = FuncExport 0}];
-}
+let string_of_null = function
+  | NoNull -> ""
+  | Null -> "null "
 
-let () =
-  let wat = string_of_module example_module_2 in
-  print_endline wat;
-  let wat = string_of_module example_module_1 in
-  print_endline wat
+let string_of_final = function
+  | NoFinal -> ""
+  | Final -> " final"
+
+let string_of_mut s = function
+  | Cons -> s
+  | Var -> "(mut " ^ s ^ ")"
+
+
+let string_of_num_type = function
+  | I32T -> "i32"
+  | I64T -> "i64"
+  | F32T -> "f32"
+  | F64T -> "f64"
+
+let string_of_vec_type = function
+  | V128T -> "v128"
+
+let rec string_of_heap_type = function
+  | AnyHT -> "any"
+  | NoneHT -> "none"
+  | EqHT -> "eq"
+  | I31HT -> "i31"
+  | StructHT -> "struct"
+  | ArrayHT -> "array"
+  | FuncHT -> "func"
+  | NoFuncHT -> "nofunc"
+  | ExternHT -> "extern"
+  | NoExternHT -> "noextern"
+  | VarHT x -> string_of_var x
+  | DefHT dt -> "(" ^ string_of_def_type dt ^ ")"
+  | BotHT -> "something"
+
+and str_of_ref_type t = 
+  match t with
+  | (Null, AnyHT) -> "anyref"
+  | (Null, EqHT) -> "eqref"
+  | (Null, I31HT) -> "i31ref"
+  | (Null, StructHT) -> "structref"
+  | (Null, ArrayHT) -> "arrayref"
+  | (Null, FuncHT) -> "funcref"
+  | t -> string_of_ref_type t
+
+and string_of_ref_type = function
+  | (nul, t) -> "(ref " ^ string_of_null nul ^ string_of_heap_type t ^ ")"
+
+and string_of_val_type = function
+  | NumT t -> string_of_num_type t
+  | VecT t -> string_of_vec_type t
+  | RefT t -> string_of_ref_type t
+  | BotT -> "bot"
+
+
+and string_of_result_type = function
+  | ts -> "[" ^ String.concat " " (List.map string_of_val_type ts) ^ "]"
+
+
+and string_of_storage_type = function
+  | ValStorageT t -> string_of_val_type t
+  | PackStorageT p -> "i" ^ string_of_int (8 * packed_size p)
+
+and string_of_field_type = function
+  | FieldT (mut, t) -> string_of_mut (string_of_storage_type t) mut
+
+and string_of_struct_type = function
+  | StructT fts ->
+    String.concat " " (List.map (fun ft -> "(field " ^ string_of_field_type ft ^ ")") fts)
+
+and string_of_array_type = function
+  | ArrayT ft -> string_of_field_type ft
+
+and string_of_func_type = function
+  | FuncT (ts1, ts2) ->
+    string_of_result_type ts1 ^ " -> " ^ string_of_result_type ts2
+
+and string_of_str_type = function
+  | DefStructT st -> "struct " ^ string_of_struct_type st
+  | DefArrayT at -> "array " ^ string_of_array_type at
+  | DefFuncT ft -> "func " ^ string_of_func_type ft
+
+and string_of_sub_type = function
+  | SubT (Final, [], st) -> string_of_str_type st
+  | SubT (fin, hts, st) ->
+    String.concat " "
+      (("sub" ^ string_of_final fin) :: List.map string_of_heap_type hts) ^
+    " (" ^ string_of_str_type st ^ ")"
+
+and string_of_rec_type = function
+  | RecT [st] -> string_of_sub_type st
+  | RecT sts ->
+    "rec " ^
+    String.concat " " (List.map (fun st -> "(" ^ string_of_sub_type st ^ ")") sts)
+
+and string_of_def_type = function
+  | DefT (RecT [st], 0) -> string_of_sub_type st
+  | DefT (rt, i) -> "(" ^ string_of_rec_type rt ^ ")." ^ string_of_int i
+
+
+let string_of_limits = function
+  | {min; max} ->
+    string_of_int min ^
+    (match max with None -> "" | Some n -> " " ^ string_of_int n)
+
+let string_of_memory_type = function
+  | MemoryT lim -> string_of_limits lim
+
+let string_of_table_type = function
+  | TableT (lim, t) -> string_of_limits lim ^ " " ^ string_of_ref_type t
+
+let string_of_global_type = function
+  | GlobalT (mut, t) -> string_of_mut (string_of_val_type t) mut
+
+let string_of_local_type = function
+  | LocalT (Set, t) -> string_of_val_type t
+  | LocalT (Unset, t) -> "(unset " ^ string_of_val_type t ^ ")"
+
+let string_of_extern_type = function
+  | ExternFuncT dt -> "func " ^ string_of_def_type dt
+  | ExternTableT tt -> "table " ^ string_of_table_type tt
+  | ExternMemoryT mt -> "memory " ^ string_of_memory_type mt
+  | ExternGlobalT gt -> "global " ^ string_of_global_type gt
+
+
+let string_of_export_type = function
+  | ExportT (et, name) ->
+    "\"" ^ string_of_name name ^ "\" : " ^ string_of_extern_type et
+
+let string_of_import_type = function
+  | ImportT (et, module_name, name) ->
+    "\"" ^ string_of_name module_name ^ "\" \"" ^
+      string_of_name name ^ "\" : " ^ string_of_extern_type et
+
+let string_of_module_type = function
+  | ModuleT (its, ets) ->
+    String.concat "" (
+      List.map (fun it -> "import " ^ string_of_import_type it ^ "\n") its @
+      List.map (fun et -> "export " ^ string_of_export_type et ^ "\n") ets
+    )
+
+let list f xs = List.map f xs
+let list_of_opt = function None -> [] | Some x -> [x]
+let tab head f xs = if xs = [] then [] else [Node (head, list f xs)]
+
+let atom f x = Atom (f x)
+
+let decls kind ts = tab kind (atom string_of_val_type) ts
+
+let get o x =
+    match o with
+    | Some y -> y
+    | None -> x
+
+let map f = function
+    | Some x -> Some (f x)
+    | None -> None
+
+let opt_s f xo = get (map f xo) ""
+
+let string_of_local_idx (x : local_idx)= 
+  match x with
+  | i -> string_of_int i
+
+let string_of_extension = function
+  | SX -> "_s"
+  | ZX -> "_u"
+
+let string_of_num_type = function
+  | I32T -> "i32"
+  | I64T -> "i64"
+  | F32T -> "f32"
+  | F64T -> "f64"
+
+(* Helper function to convert val_type to string *)
+let rec string_of_val_type = function
+  | NumT nt -> string_of_num_type nt
+  | VecT _ -> "v128" (* Placeholder, since only one vector type is defined *)
+  | RefT (null, ht) -> 
+    (if null = Null then "null " else "") ^ string_of_heap_type ht
+  | BotT -> "bot"
+
+(* Helper function to convert heap_type to string *)
+and string_of_heap_type = function
+  | AnyHT -> "any"
+  | NoneHT -> "none"
+  | EqHT -> "eq"
+  | I31HT -> "i31"
+  | StructHT -> "struct"
+  | ArrayHT -> "array"
+  | FuncHT -> "func"
+  | NoFuncHT -> "nofunc"
+  | ExternHT -> "extern"
+  | NoExternHT -> "noextern"
+  | VarHT (StatX idx) -> Printf.sprintf "(ref %d)" idx
+  | VarHT (RecX idx) -> Printf.sprintf "(rec %d)" idx
+  | DefHT _ -> "def" (* Simplified *)
+  | BotHT -> "bot"
+
+(* Helper function to convert mut to string *)
+let string_of_initop = function
+  | Explicit -> ""
+  | Implicit -> "_default" 
+
+let sexpr_of_block_type = function 
+  | VarBlockType x -> [Node ("type " ^ string_of_int x, [])]
+  | ValBlockType ts -> decls "result" (list_of_opt ts)
+
+(* Function to convert instructions to string *)
+let rec sexpr_of_instr e = 
+  let head, inner =
+  match e with 
+  | IntConst (nt, i) -> Printf.sprintf "%s.const %d" (string_of_num_type nt) i, []
+  | FloatConst (nt, f) -> Printf.sprintf "%s.const %f" (string_of_num_type nt) f, []
+  | LocalGet idx -> Printf.sprintf "local.get %d" idx, []
+  | LocalSet idx -> Printf.sprintf "local.set %d" idx, []
+  | Add nt -> Printf.sprintf "%s.add" (string_of_num_type nt), []
+  | Sub nt -> Printf.sprintf "%s.sub" (string_of_num_type nt), []
+  | Mul nt -> Printf.sprintf "%s.mul" (string_of_num_type nt), []
+  | Div nt -> Printf.sprintf "%s.div" (string_of_num_type nt), []
+  | Shl nt -> Printf.sprintf "%s.shl" (string_of_num_type nt), []
+  | Shr nt -> Printf.sprintf "%s.shr" (string_of_num_type nt), []
+  | Ne nt -> Printf.sprintf "%s.ne" (string_of_num_type nt), []
+  | Call idx -> Printf.sprintf "call %d" idx, []
+  | Return -> "return", []
+  | If (bt, es1, es2) -> 
+    "if", sexpr_of_block_type bt @
+      [Node ("then", list sexpr_of_instr es1); Node ("else", list sexpr_of_instr es2)]
+  | Block (bt, es) -> "block", sexpr_of_block_type bt @ list sexpr_of_instr es
+  | Loop (bt, es) -> "loop", sexpr_of_block_type bt @ list sexpr_of_instr es
+  | Br idx -> Printf.sprintf "br %d" idx, []
+  | BrIf idx -> Printf.sprintf "br_if %d" idx, []
+  | BrTable (xs, x) -> "br_table " ^ String.concat " " (list string_of_int (xs @ [x])), []
+  | Unreachable -> "unreachable", []
+  | StructNew (idx, op) -> Printf.sprintf "struct.new%s %d" (string_of_initop op) idx, []
+  | StructGet (x, y, exto) -> "struct.get" ^ opt_s string_of_extension exto ^ " " ^ string_of_int x ^ " " ^ string_of_int y, [] 
+  | StructSet (x, y) -> Printf.sprintf "struct.set %s %s" (string_of_local_idx x) (string_of_local_idx y), [] 
+  | Drop -> "drop", []
+  | ArrayNew (idx, op) -> Printf.sprintf "array.new%s %d" (string_of_initop op) idx, []
+  | ArrayGet (x, exto) -> Printf.sprintf "array.get%s %d" (opt_s string_of_extension exto) x, []
+  | ArraySet x -> Printf.sprintf "array.set %d" x, []
+  | RefNull ht -> Printf.sprintf "ref.null" , [Atom (string_of_heap_type ht)]
+  | RefAsNonNull -> "ref.as_non_null", []
+  | RefEq -> "ref.eq", []
+  | RefIsNull -> "ref.is_null", []
+  | RefFunc idx -> Printf.sprintf "ref.func %d" idx, []
+  | RefI31 -> "ref.i31", [] 
+  | RefCast t -> "ref.cast", [Atom (str_of_ref_type t)]
+  | GlobalGet idx -> Printf.sprintf "global.get %d" idx, []
+  | I31Get exto -> Printf.sprintf "i31.get%s" (string_of_extension exto), []
+  in 
+  Node (head, inner)
+
+(* Function to print a function *)
+let func_with_name name f =
+  let {ftype; locals; body} = f in
+  Node ("func" ^ name,
+    [Node ("type " ^ string_of_int ftype, [])] @
+    decls "local" (List.map (fun loc -> loc.ltype) locals) @
+    list sexpr_of_instr body
+  )
+
+let func_with_index off i f =
+  func_with_name (" $" ^ string_of_int (off + i)) f
+
+let func f =
+  func_with_name "" f

@@ -1,3 +1,3 @@
 (library
  (name compiler)
- (libraries language cliInterpreter loader))
+ (libraries language cliInterpreter loader wasm))
