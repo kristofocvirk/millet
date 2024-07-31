@@ -118,15 +118,14 @@ let find_val_var = find_var Env.find_opt_val
 
 
 let filter_loc (ctxt : Lower.ctxt) find_var vals =
-  Map.filter (fun x _ ->
+  Ast.VariableMap.filter (fun x _ ->
     match find_var ctxt x ctxt.ext.envs with
     | (Lower.PreLoc _ | Lower.GlobalLoc _), _ -> false
     | (Lower.LocalLoc _ | Lower.ClosureLoc _), _ -> true
   ) vals
 
 let filter_vars (ctxt : Lower.ctxt) vars =
-  { vals = filter_loc ctxt find_val_var vars.vals;
-  }
+  filter_loc ctxt find_val_var vars
 
 let compile_var find_var (ctxt : Lower.ctxt)x =
   let loc, funcloc_opt = find_var ctxt x ctxt.ext.envs in
@@ -235,11 +234,11 @@ and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_
     compile_coerce ctxt Lower.rigid_rep dst ty;
     None
   | Ast.Variant _ -> failwith "not implemented"
-  | Ast.Lambda _ -> Some (compile_func ctxt exp)
+  | Ast.Lambda _ -> Some (compile_func ctxt state exp)
   | Ast.RecLambda _ -> failwith "not implemented"
 
-and compile_func ctxt e : Lower.func_loc =
-  let func_loc, def, _fixup = compile_func_staged ctxt Env.Set.empty e in
+and compile_func ctxt state e : Lower.func_loc =
+  let func_loc, def, _fixup = compile_func_staged ctxt state Env.Set.empty e in
   def ctxt;
   func_loc
 

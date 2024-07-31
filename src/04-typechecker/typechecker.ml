@@ -338,15 +338,17 @@ let rec free_exp state e =
     (match exp with 
     | Some x -> free_exp state x
     | None -> empty) 
-  | Lambda (pat, comp) -> ()
-  | RecLambda (var, (pat, comp)) -> ()
+  | Lambda abs -> free_case state abs
+  | RecLambda (var, abs) -> 
+    let ty, _ = infer_expression state (Ast.Var var) in
+    free_case state abs -- val_var var ty 
 
-and free_case (p, e) state =
-  free_exp state e -- bound_pat state p ++ free_pat p
+and free_case state (p, e) =
+  free_comp state e -- bound_pat state p ++ free_pat p
 
-and free_comp c = 
+and free_comp state c = 
   match c with 
-  | Ast.Return exp -> ()
-  | Do (comp, abs) -> ()
-  | Match (exp, pes) -> ()
-  | Apply (e1, e2) -> ()
+  | Ast.Return exp -> free_exp state exp 
+  | Do (comp, abs) -> free_comp state comp ++ free_case state abs
+  | Match (exp, pes) -> free_exp state exp ++ list (free_case state) pes
+  | Apply (e1, e2) -> free_exp state e1 ++ free_exp state e2 

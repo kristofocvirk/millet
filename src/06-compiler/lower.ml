@@ -143,6 +143,7 @@ let absref = lower_ref Nonull abs
 
 let sub xs st = Wasm.SubT (Wasm.NoFinal ,List.map (fun x -> x) xs, st)
 let field t = Wasm.FieldT (Wasm.Cons, Wasm.ValStorageT t)
+let field_mut t = Wasm.FieldT (Wasm.Var , Wasm.ValStorageT t)
 let ref_ x = Wasm.RefT (Wasm.NoNull, Wasm.VarHT (Wasm.StatX x))
 
 let rec lower_value_type ctxt rep t : Wasm.val_type =
@@ -237,18 +238,15 @@ and lower_block_type ctxt rep t : Wasm.block_type =
 
 (* Closure environments *)
 
-(*let lower_clos_env ctxt vars rec_xs
-  : Wasm.field_type list * (string * Ast.ty * int) list =
-  let open Syntax in
+let lower_clos_env ctxt vars rec_xs
+  : Wasm.field_type list * (Ast.variable * Ast.ty * int) list =
   let fixups = ref [] in
-  let k = E.Map.cardinal vars.mods in
   let flds =
     List.mapi (fun i (x, t) ->
-      if E.Set.mem x rec_xs then begin
-        fixups := (x, t, i + k) :: !fixups;
-        field_mut (lower_value_type ctxt at (local_rep ()) t)
+      if Ast.VariableMap.mem x rec_xs then begin
+        fixups := (x, t, i) :: !fixups;
+        field_mut (lower_value_type ctxt (local_rep ()) t)
       end else
-        field (lower_value_type ctxt at (clos_rep ()) t)
-    ) (Vars.bindings vars.vals)
+        field (lower_value_type ctxt (clos_rep ()) t)
+    ) (Ast.VariableMap.bindings vars)
   in flds, !fixups
-*)
