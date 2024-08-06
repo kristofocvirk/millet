@@ -42,7 +42,7 @@ let implicit_entity ents : int =
 (* Compilation context *)
 
 module DefTypes = Map.Make(struct type t = sub_type let compare = compare end)
-module Refs = Set.Make(Int32)
+module Refs = Set.Make(Int)
 module Intrinsics = Map.Make(String)
 
 type internal =
@@ -248,7 +248,7 @@ let emit_func ctxt ts1' ts2' f : int =
   def_func ctxt ts1' ts2' f;
   idx
 
-let emit_func_ref ctxt _at idx =
+let emit_func_ref ctxt idx =
   ctxt.int.refs := Refs.add idx !(ctxt.int.refs)
 
 let emit_start ctxt idx =

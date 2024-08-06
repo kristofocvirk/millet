@@ -9,9 +9,12 @@ open Source
 
 type pat_class = IrrelevantPat | TotalPat | PartialPat
 
+let max_func_arity = 12
+
+let ref_cast idx = Wasm.RefCast (Wasm.NoNull, Wasm.VarHT (Wasm.StatX idx))
+
 let rec compile_coerce ctxt src dst t =
   if src <> dst then
-  let ref_cast idx = Wasm.RefCast (Wasm.NoNull, Wasm.VarHT (Wasm.StatX idx)) in
   let emit ctxt = List.iter (Emit.emit_instr ctxt) in
   let non_null n1 n2 =
     if n1 = Lower.Null && n2 = Lower.Nonull then emit ctxt [RefAsNonNull] in
@@ -114,6 +117,24 @@ let rec find_var f ctxt x envs =
     | Some {it = locs; _} -> locs
     | None -> find_var f ctxt x envs'
 
+(* helpers *)
+let compile_load_arg ctxt i arg argv_opt =
+  let emit ctxt = List.iter (emit_instr ctxt) in
+  match argv_opt with
+  | None ->
+    assert (i < max_func_arity); 
+    emit ctxt [
+      LocalGet (arg-1 + i);
+    ]
+  | Some argv ->
+    emit ctxt [
+      LocalGet (arg-1);
+      IntConst (I32T, i);
+      RefI31;
+      ArrayGet (argv, None);
+      RefAsNonNull;
+    ]
+
 let find_val_var = find_var Env.find_opt_val 
 
 
@@ -126,6 +147,8 @@ let filter_loc (ctxt : Lower.ctxt) find_var vals =
 
 let filter_vars (ctxt : Lower.ctxt) vars =
   filter_loc ctxt find_val_var vars
+
+(* variables *)
 
 let compile_var find_var (ctxt : Lower.ctxt)x =
   let loc, funcloc_opt = find_var ctxt x ctxt.ext.envs in
@@ -155,6 +178,63 @@ let compile_val_var ctxt x t dst =
     if Lower.null_rep rep = Null && Lower.null_rep dst <> Null then
       emit_instr ctxt Wasm.RefAsNonNull 
 
+(* closures *)
+
+let local_ref_ty idx = 
+  let x = (RefT (NoNull, VarHT (StatX idx))) in 
+  {ltype = x}
+
+let compile_load_env ctxt clos (closNenv : int) vars envflds=
+  if vars <> Ast.VariableMap.empty then begin
+    let emit ctxt = List.iter (emit_instr ctxt) in
+    let envlocal = emit_local ctxt (local_ref_ty closNenv) in
+    let rttidx = closNenv in
+    emit ctxt [
+      LocalGet clos;
+      ref_cast rttidx;
+      LocalSet (envlocal);
+    ];
+    let _, env = Lower.current_scope ctxt in
+    let _ =
+      Ast.VariableMap.fold (fun x _ i ->
+        let idx = Lower.clos_env_idx + i in
+        let _, func_loc_opt = find_val_var ctxt x ctxt.ext.envs in
+        let null =
+          if func_loc_opt = None then Lower.Nonull else
+          match List.nth envflds i with
+          | (FieldT (_ ,ValStorageT (RefT (Null, _)))) -> Null
+          | _ -> Nonull
+        in
+        env := Env.extend_val !env x
+          ((@@) (Lower.ClosureLoc (null, idx, envlocal, closNenv), func_loc_opt)); 
+        i + 1
+      ) vars 0 
+    in ()
+  end
+
+let compile_alloc_clos ctxt fn arity vars rec_xs closNenv=
+  let emit ctxt = List.iter (emit_instr ctxt) in
+  let rttidx = closNenv in
+  emit_func_ref ctxt fn;
+  emit ctxt [
+    IntConst (I32T, arity);
+    RefFunc fn;
+  ];
+  Ast.VariableMap.iter (fun x t ->
+    let rep = if Ast.VariableMap.mem x rec_xs then Lower.local_rep () else Lower.clos_rep () in
+    compile_val_var ctxt x t rep
+  ) vars;
+  emit ctxt [
+    GlobalGet (rttidx);
+  ];
+  emit ctxt [
+    StructNew (closNenv, Explicit);
+  ]
+
+
+
+  (* patterns *)
+
 let rec classify_pat = function
     | Ast.PVar _ -> TotalPat 
     | Ast.PAnnotated (p1, _) -> classify_pat p1
@@ -165,7 +245,7 @@ let rec classify_pat = function
     | Ast.PConst _ -> PartialPat 
     | Ast.PNonbinding -> IrrelevantPat 
 
-let rec compile_pattern ctxt (state : Ty.state)  fail pat = 
+let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat = 
   let emit ctxt = List.iter (emit_instr ctxt) in
   match pat with
   | Ast.PNonbinding | Ast.PTuple [] -> 
@@ -207,6 +287,7 @@ let rec compile_pattern ctxt (state : Ty.state)  fail pat =
     | _ -> assert false
     )
 
+    (* expressions *)
 and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_loc option= 
   let emit ctxt = List.iter (emit_instr ctxt) in 
   match exp with
@@ -237,88 +318,93 @@ and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_
   | Ast.Lambda _ -> Some (compile_func ctxt state exp)
   | Ast.RecLambda _ -> failwith "not implemented"
 
+    (* functions *)
+
 and compile_func ctxt state e : Lower.func_loc =
-  let func_loc, def, _fixup = compile_func_staged ctxt state Env.Set.empty e in
+  let func_loc, def, _fixup = compile_func_staged ctxt state Ast.VariableMap.empty e in
   def ctxt;
   func_loc
 
-and compile_func_staged ctxt rec_xs f : Lower.func_loc * _ * _ =
-  let emit ctxt = List.iter (emit_instr ctxt f.at) in
-  let vars = filter_vars ctxt (free_exp f) in
-  let rec flat ps e =
-    match e.it with
-    | FunE (p, e') -> flat (p::ps) e'
+and compile_func_staged ctxt state (rec_xs : 'a Ast.VariableMap.t) f : Lower.func_loc * _ * _ =
+  let emit ctxt = List.iter (emit_instr ctxt) in
+  let vars = filter_vars ctxt (Ty.free_exp state f) in
+  let ty, _ = Ty.infer_expression state f in
+  let rec flat ps (e : Ast.expression) =
+    match e with
+    | Ast.Lambda (p, Ast.Return x) -> flat (p::ps) x 
     | _ ->
-      let fn, def_func = emit_func_deferred ctxt f.at in
-      let envflds, fixups = lower_clos_env ctxt f.at vars rec_xs in
+      let fn, def_func = emit_func_deferred ctxt in
+      let envflds, fixups = Lower.lower_clos_env ctxt vars rec_xs in
       let ps = List.rev ps in
       let arity = List.length ps in
-      let _code, closN, closNenv = lower_clos_type ctxt f.at arity envflds in
+      let _code, closN, closNenv = Lower.lower_clos_type ctxt arity envflds in
       let def ctxt =
-        let argts, argv_opt = lower_param_types ctxt f.at arity in
-        def_func ctxt W.(ref_ closN :: argts) [absref] (fun ctxt _ ->
-          let ctxt = enter_scope ctxt LocalScope in
-          let clos = emit_param ctxt f.at in
-          let args = List.map (fun _ -> emit_param ctxt f.at) argts in
+        let argts, argv_opt = Lower.lower_param_types ctxt arity in
+        def_func ctxt ((RefT (NoNull, VarHT (StatX closN))) :: argts) [RefT Lower.absref] (fun ctxt _ ->
+          let ctxt = Lower.enter_scope ctxt LocalScope in
+          let clos = emit_param ctxt in
+          let args = List.map (fun _ -> emit_param ctxt) argts in
           let arg0 = List.hd args in
-          compile_load_env ctxt clos closN closNenv vars envflds f.at;
+          compile_load_env ctxt clos closNenv vars envflds;
 
           let partial = List.exists (fun p -> classify_pat p = PartialPat) ps in
           if not partial then
             List.iteri (fun i pI ->
+              let ty, _, _ = Ty.infer_pattern state pI in
               match classify_pat pI with
               | IrrelevantPat -> ()
               | TotalPat ->
-                Intrinsic.compile_load_arg ctxt pI.at i arg0 argv_opt;
-                compile_coerce ctxt arg_rep (pat_rep ()) (Source.et pI) f.at;
-                compile_pat ctxt (-1l) None pI
+                compile_load_arg ctxt i arg0 argv_opt;
+                compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
+                compile_pattern ctxt state (-1) pI
               | PartialPat -> assert false
             ) ps
           else
-            emit_block ctxt f.at W.block W.void (fun ctxt ->
-              emit_block ctxt f.at W.block W.void (fun ctxt ->
+            let block bt es = Block (bt, es) in
+            emit_block ctxt block (ValBlockType None)(fun ctxt ->
+              emit_block ctxt block (ValBlockType None) (fun ctxt ->
                 List.iteri (fun i pI ->
+                  let ty, _, _ = Ty.infer_pattern state pI in
                   match classify_pat pI with
                   | IrrelevantPat -> ()
                   | TotalPat ->
-                    Intrinsic.compile_load_arg ctxt pI.at i arg0 argv_opt;
-                    compile_coerce ctxt arg_rep (pat_rep ()) (Source.et pI) f.at;
-                    compile_pat ctxt (-1l) None pI
+                    compile_load_arg ctxt i arg0 argv_opt;
+                    compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
+                    compile_pattern ctxt state (-1) pI
                   | PartialPat ->
-                    Intrinsic.compile_load_arg ctxt pI.at i arg0 argv_opt;
-                    compile_coerce ctxt arg_rep (pat_rep ()) (Source.et pI) f.at;
-                    compile_pat ctxt 0l None pI;
+                    compile_load_arg ctxt i arg0 argv_opt;
+                    compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
+                    compile_pattern ctxt state 0 pI;
                 ) ps;
-                emit ctxt W.[br (1l @@ f.at)];
+                emit ctxt [Br (1)];
               );
-              emit ctxt W.[unreachable]
+              emit ctxt [Unreachable]
             );
-          compile_exp ctxt e arg_rep
+          ignore (compile_expression ctxt state e Lower.arg_rep)
         );
         compile_alloc_clos
-          ctxt fn (List.length ps) vars rec_xs closN closNenv f.at
+          ctxt fn (List.length ps) vars rec_xs closNenv
       in
       let fixup ctxt self =
         if fixups <> [] then begin
-          let tmp = emit_local ctxt f.at W.(ref_null_ closNenv) in
-          let rttidx = lower_rtt_global ctxt f.at closNenv in
-          compile_val_var ctxt Source.(self @@ f.at) (Source.et f) ref_rep;
-          emit ctxt W.[
-            ref_as_data;
-            global_get (rttidx @@ f.at);
-            ref_cast;
-            local_set (tmp @@ f.at);
+          let tmp = emit_local ctxt ({ltype = RefT (Null, VarHT (StatX closNenv))}) in
+          let rttidx = (NoNull, VarHT (StatX closNenv)) in
+          compile_val_var ctxt Source.(self) ty Lower.ref_rep;
+          emit ctxt [
+            (*ref_as_data;*) 
+            RefCast (rttidx);
+            LocalSet (tmp);
           ];
           List.iter (fun (x, t, i) ->
-            emit ctxt W.[local_get (tmp @@ f.at)];
-            compile_val_var ctxt Source.(x @@ f.at) t (clos_rep ());
-            emit ctxt W.[
-              struct_set (closNenv @@ f.at) (clos_env_idx +% int32 i @@ f.at)
+            emit ctxt [Wasm.LocalGet (tmp)];
+            compile_val_var ctxt Source.(x) t (Lower.clos_rep ());
+            emit ctxt [
+              StructGet ((closNenv), (Lower.clos_env_idx + i), None);
             ];
           ) fixups
         end
       in
-      {funcidx = fn; typeidx = closN; arity = List.length ps}, def, fixup
+      Lower.{funcidx = fn; typeidx = closN; arity = List.length ps}, def, fixup
   in flat [] f
 
 let compile_computation ctxt state = function
