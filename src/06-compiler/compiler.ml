@@ -148,9 +148,328 @@ let filter_loc (ctxt : Lower.ctxt) find_var vals =
 let filter_vars (ctxt : Lower.ctxt) vars =
   filter_loc ctxt find_val_var vars
 
+let curry_fun_idx = Lower.clos_env_idx
+let curry_arg_idx = Lower.clos_env_idx + 1 (* first argument or argv *)
+
+let compile_push_args ctxt n shift compile_eI =
+  let emit ctxt = List.iter (emit_instr ctxt) in
+  match Lower.lower_param_types ctxt n with
+  | _, None ->
+    for i = 0 to n - 1 do
+      compile_eI i
+    done
+  | _, Some argv ->
+    let tmp = emit_local ctxt {ltype = (RefT (NoNull, VarHT (StatX argv)))} in
+    emit ctxt [
+      IntConst (I32T, 0);
+      RefI31;
+      IntConst (I32T, n);
+      ArrayNew (argv, Explicit);
+      LocalTee (tmp + shift);
+      RefAsNonNull;
+    ];
+    for i = 0 to n - 1 do
+      emit ctxt [
+        LocalGet (tmp + shift);
+        IntConst (I32T, i);
+      ];
+      compile_eI i;
+      emit ctxt [
+        ArraySet (argv);
+      ]
+    done
+
+let compile_load_arg ctxt i arg argv_opt =
+  let emit ctxt = List.iter (emit_instr ctxt) in
+  match argv_opt with
+  | None ->
+    assert (i < max_func_arity);
+    emit ctxt [
+      LocalGet (arg-1 + i);
+    ]
+  | Some argv ->
+    emit ctxt [
+      LocalGet(arg-1);
+      IntConst (I32T, i);
+      RefI31;
+      ArrayGet (argv, None);
+      RefAsNonNull;
+    ]
+
+let compile_load_args ctxt i j shift arg0 src_argv_opt =
+  assert (j <= max_func_arity || src_argv_opt <> None);
+  if j - i > max_func_arity && i = 0 then
+    (* Reuse argv *)
+    emit_instr ctxt (LocalGet (arg0 + shift))
+  else
+    compile_push_args ctxt (j - i) shift (fun k ->
+      compile_load_arg ctxt (i + k) (arg0 + shift) src_argv_opt
+    )
+
+
+let rec compile_func_apply arity ctxt typeidx=
+  assert (arity > 0);
+  Emit.lookup_intrinsic ctxt ("func_apply" ^ string_of_int arity) (fun def_fwd ->
+    let emit ctxt = List.iter (emit_instr ctxt) in
+    let anyclos = Lower.lower_anyclos_type ctxt in
+    let argts, argv_opt = Lower.lower_param_types ctxt arity in
+    emit_func ctxt ((RefT (NoNull, VarHT (StatX anyclos))) :: argts) [RefT Lower.absref] (fun ctxt fn ->
+      def_fwd fn;
+      let clos = emit_param ctxt in
+      let args = List.map (fun _ -> emit_param ctxt ) argts in
+      let arg0 = List.hd args in
+      let block bt es = Block (bt, es) in
+      emit_block ctxt block (ValBlockType None) (fun ctxt ->
+        emit_block ctxt block (ValBlockType None)(fun ctxt ->
+          let rec over_apply ctxt = function
+            | 0 ->
+              (* Dispatch on closure arity *)
+              let labs = List.init (arity + 1) (fun i -> (max 0 (i - 1)) ) in
+              emit ctxt [
+                LocalGet (clos);
+                StructGet (anyclos, Lower.clos_arity_idx, None);
+                BrTable (labs, arity);
+              ]
+            | n ->
+              emit_block ctxt block (ValBlockType None) (fun ctxt ->
+                over_apply ctxt (n - 1);
+              );
+              (* Dispatching here when closure arity n < apply arity *)
+
+              let _, closN = Lower.lower_func_type ctxt n in
+              let ref_closN_0 = emit_local ctxt {ltype = (RefT (NoNull, VarHT (StatX closN)))} in
+              (* Downcast closure type *)
+              emit ctxt [
+                LocalGet (clos);
+                ref_cast (closN);
+                LocalSet ref_closN_0
+              ];
+              (* Bind result to local *)
+              emit_block ctxt block (ValBlockType None) (fun ctxt ->
+                (* Call target function with arguments it can handle *)
+                emit ctxt [
+                  LocalGet ref_closN_0;
+                ];
+                compile_load_args ctxt 0 n 1 arg0 argv_opt;
+                emit ctxt [
+                  LocalGet ref_closN_0;
+                  StructGet (closN, Lower.clos_code_idx, None);
+                  CallRef typeidx;
+                  (* Downcast resulting closure *)
+                  ref_cast anyclos;
+                ];
+                (* Apply result to remaining arguments *)
+                compile_load_args ctxt n arity 1 arg0 argv_opt;
+                emit ctxt [
+                  Call (compile_func_apply (arity - n) ctxt typeidx) ;
+                  Return;  (* TODO: should be tail call *)
+                ];
+              )
+          in over_apply ctxt (arity - 1)
+        );
+        (* Dispatching here when closure arity n = apply arity *)
+        let _, closN = Lower.lower_func_type ctxt arity in
+        let ref_closN_1 = emit_local ctxt {ltype = (RefT (NoNull, VarHT (StatX closN)))} in
+        (* Downcast closure type *)
+        emit ctxt [
+          LocalGet (clos);
+          ref_cast closN;
+          LocalSet ref_closN_1;
+        ];
+        (* Bind result to local *)
+        emit_block ctxt block (ValBlockType None) (fun ctxt ->
+          (* Call target function *)
+          emit ctxt [
+            LocalGet ref_closN_1; 
+          ];
+          compile_load_args ctxt 0 arity 1 arg0 argv_opt;
+          emit ctxt [
+            LocalGet ref_closN_1;
+            StructGet (closN, Lower.clos_code_idx, None);
+            CallRef typeidx;
+            Return;  (* TODO: should be tail call *)
+          ]
+        )
+      );
+      (* Dispatching here when closure arity > apply arity *)
+      (* Create curried closure *)
+      let flds = List.map Lower.field ((RefT (NoNull, VarHT (StatX anyclos))) :: argts) in
+      let _, _, curriedN = Lower.lower_clos_type ctxt 1 flds in
+      emit ctxt [
+        IntConst (I32T, 1);
+        RefFunc (compile_func_curry arity ctxt typeidx);
+        LocalGet (clos);
+      ];
+      compile_load_args ctxt 0 arity 0 arg0 argv_opt;
+      emit ctxt [
+        StructNew (curriedN, Explicit);
+      ]
+    )
+  )
+    
+
+
+and compile_func_curry arity ctxt typeidx=
+  let block bt es = Block (bt, es) in
+  let loop bt es = Loop (bt, es) in
+  let arity_string =
+    if arity <= max_func_arity then string_of_int arity else "vec" in
+  Emit.lookup_intrinsic ctxt ("func_curry" ^ arity_string) (fun def_fwd ->
+    let emit ctxt = List.iter (emit_instr ctxt ) in
+    let anyclos = Lower.lower_anyclos_type ctxt in
+    let argts, argv_opt = Lower.lower_param_types ctxt arity in
+    let flds = List.map Lower.field ((RefT (NoNull, VarHT (StatX anyclos))) :: argts) in
+    let _, clos1, curriedN = Lower.lower_clos_type ctxt 1 flds in
+    (* curryN = fun xN => apply_N+1 x0 ... xN-1 xN *)
+    emit_func ctxt [RefT (NoNull, VarHT (StatX clos1)); RefT Lower.absref] [RefT Lower.absref] (fun ctxt fn ->
+      def_fwd fn;
+      let clos = emit_param ctxt in
+      let arg0 = emit_param ctxt in
+      let ref_curriedN = emit_local ctxt {ltype = (RefT (NoNull, VarHT (StatX curriedN)))} in
+      emit_func_ref ctxt fn;
+      (* Downcast generic to specific closure type *)
+      emit ctxt [
+        LocalGet (clos);
+        ref_cast curriedN;
+        LocalSet ref_curriedN;
+      ];
+      (* Bind result to local *)
+      emit_block ctxt block (ValBlockType (Some (RefT Lower.absref))) (fun ctxt ->
+        (* Load arguments *)
+        if arity <= max_func_arity then begin
+          (* Load target function *)
+          emit ctxt [
+            LocalGet ref_curriedN;
+            StructGet (curriedN, curry_fun_idx, None);
+          ];
+          (* Target expects direct args, load them individually *)
+          compile_push_args ctxt (arity + 1) 1 (fun i ->
+            if i < arity then
+              (* First arity args are loaded from closure environment *)
+              emit ctxt [
+                LocalGet ref_curriedN;
+                StructGet (curriedN, curry_arg_idx + i, None);
+              ]
+            else
+              (* Last arg is the applied one *)
+              emit ctxt [
+                LocalGet (arg0 + 1);
+              ]
+          );
+          (* Call target *)
+          emit ctxt [
+            Call (compile_func_apply (arity + 1) ctxt typeidx);
+            Return;  (* TODO: should be tail call *)
+          ]
+        end else begin
+          (* Target expects arg vector, copy to extended vector *)
+          (* This code is agnostic to static arity, hence works for any *)
+          
+          let argv = Option.get argv_opt in
+          let src = emit_local ctxt {ltype = (RefT (NoNull, VarHT (StatX argv)))} in
+          let dst = emit_local ctxt {ltype = (RefT (NoNull, VarHT (StatX argv)))} in
+          let len = emit_local ctxt {ltype = (NumT I32T)} in
+          let i = emit_local ctxt {ltype = (NumT I32T)} in
+          emit ctxt [
+            (* Array init value *)
+            IntConst (I32T, 0);
+            RefI31;
+            (* Load source *)
+            LocalGet ref_curriedN;  (* curriedN *)
+            StructGet (curriedN, curry_arg_idx, None);
+            LocalTee (src + 1);
+            (* Load length *)
+            ArrayLen;
+            LocalTee (i + 1);
+            (* Allocate destination *)
+            IntConst (I32T, 1);
+            Add I32T;
+            LocalTee (len + 1);
+            ArrayNew (argv, Explicit);
+            LocalTee (dst + 1);
+            (* Initialise applied argument *)
+            LocalGet (i + 1);
+            LocalGet (arg0 + 1);
+            ArraySet (argv);
+          ];
+          (* Copy closure arguments, from upper to lower *)
+          emit_block ctxt block (ValBlockType None)(fun ctxt ->
+            emit_block ctxt loop (ValBlockType None)(fun ctxt ->
+              emit ctxt [
+                (* Check termination condition *)
+                LocalGet (i + 1);
+                Eqz I32T;
+                BrIf 1;
+                (* Load destination *)
+                LocalGet (dst + 1);
+                (* Compute next index *)
+                LocalGet (i + 1);
+                IntConst (I32T, 1);
+                Sub I32T;
+                LocalTee (i + 1);
+                (* Read arg value from source *)
+                LocalGet (src + 1);
+                LocalGet (i + 1);
+                ArrayGet (argv, None);
+                (* Store arg value to destination *)
+                ArraySet (argv );
+                (* Iterate *)
+                Br 0;
+              ]
+            )
+          );
+          emit_block ctxt block (ValBlockType None) (fun ctxt ->
+            let _, closNP = Lower.lower_func_type ctxt (arity + 1) in
+            let ref_closNP = emit_local ctxt {ltype = (RefT (NoNull, VarHT (StatX closNP)))} in
+            emit ctxt [
+              (* Load source arity *)
+              LocalGet (len + 1);
+              (* Load destination arity *)
+              LocalGet ref_curriedN;
+              StructGet (curriedN, curry_fun_idx, None);
+              StructGet (anyclos, Lower.clos_arity_idx, None);
+              (* Compare *)
+              Ne I32T;
+              BrIf 0;
+              (* All arguments collected, perform call *)
+              LocalGet ref_curriedN;
+              StructGet (curriedN, curry_fun_idx, None);
+              ref_cast (closNP);
+            ];
+            (* Bind closure at specific type *)
+
+            emit_block ctxt block (ValBlockType (Some (RefT Lower.absref))) (fun ctxt ->
+              emit ctxt [
+                LocalGet ref_closNP;
+                LocalGet (dst + 2);
+                RefAsNonNull;
+                LocalGet ref_closNP;
+                StructGet (closNP, Lower.clos_code_idx, None);
+                CallRef typeidx;
+                Return;  (* TODO: should be tail call *)
+              ]
+            )
+          );
+          (* Still missing arguments, create new closure *)
+          emit ctxt [
+            IntConst (I32T, 1);
+            RefFunc (compile_func_curry arity ctxt typeidx);
+            LocalGet 0;
+            StructGet (curriedN, curry_fun_idx, None);
+            LocalGet (dst + 1);
+            RefAsNonNull;
+            (*rtt_canon (curriedN );*)
+            StructNew (curriedN, Explicit);
+          ]
+        end
+      )
+    )
+  )
+
+
 (* variables *)
 
-let compile_var find_var (ctxt : Lower.ctxt)x =
+let compile_var find_var (ctxt : Lower.ctxt) x =
   let loc, funcloc_opt = find_var ctxt x ctxt.ext.envs in
   (match loc with
   | Lower.PreLoc idx -> ignore idx; failwith "Preloc val_var"
@@ -177,6 +496,37 @@ let compile_val_var ctxt x t dst =
     ignore typeidx;
     if Lower.null_rep rep = Null && Lower.null_rep dst <> Null then
       emit_instr ctxt Wasm.RefAsNonNull 
+
+      let compile_val_var_bind_pre ctxt x t funcloc_opt =
+  let scope, env = Lower.current_scope ctxt in
+  let rep = Lower.scope_rep scope in
+  let vt =
+    match funcloc_opt with
+    | None -> Lower.lower_value_type ctxt rep t
+    | Some ({typeidx; _} : Lower.func_loc) ->
+      if Lower.null_rep rep = Null then (RefT (Null, VarHT (StatX typeidx))) else (RefT (NoNull, VarHT (StatX typeidx)))
+  in
+  let loc =
+    match scope with
+    | PreScope -> assert false
+    | LocalScope -> Lower.LocalLoc (emit_local ctxt ({ltype = vt}))
+    | GlobalScope -> Lower.GlobalLoc (emit_global ctxt Var vt None)
+  in
+  env := Env.extend_val !env x ((@@) (loc, funcloc_opt))
+
+let compile_val_var_bind_post ctxt x t src =
+  let _, env = Lower.current_scope ctxt in
+  let loc, _ = (Env.find_val x !env).it in
+  compile_coerce ctxt src (Lower.loc_rep loc) t;
+  (match loc  with
+  | PreLoc _ | ClosureLoc _ -> assert false
+  | LocalLoc idx -> emit_instr ctxt (LocalSet (idx)) 
+  | GlobalLoc idx -> emit_instr ctxt (GlobalSet (idx))
+  )
+
+let compile_val_var_bind ctxt x t src funcloc_opt =
+  compile_val_var_bind_pre ctxt x t funcloc_opt;
+  compile_val_var_bind_post ctxt x t src
 
 (* closures *)
 
@@ -245,13 +595,15 @@ let rec classify_pat = function
     | Ast.PConst _ -> PartialPat 
     | Ast.PNonbinding -> IrrelevantPat 
 
-let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat = 
+let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt= 
   let emit ctxt = List.iter (emit_instr ctxt) in
   match pat with
   | Ast.PNonbinding | Ast.PTuple [] -> 
     compile_coerce ctxt (Lower.pat_rep ()) DropRep (Ast.TyParam (Ast.TyParam.fresh ""))
-  | Ast.PVar var -> ignore var; failwith "not implemeted PVar"
-  | Ast.PAnnotated (pat, _) -> compile_pattern ctxt state fail pat
+  | Ast.PVar var -> 
+    let t, _, _ = Ty.infer_pattern state pat in
+    compile_val_var_bind ctxt var t (Lower.pat_rep ()) funcloc_opt 
+  | Ast.PAnnotated (pat, _) -> compile_pattern ctxt state fail pat funcloc_opt
   | Ast.PAs (pat, var) -> ignore (pat,var); failwith "not implemented"
   | Ast.PTuple ps -> 
     let typ, _, _ = Ty.infer_pattern state pat in 
@@ -271,7 +623,7 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat =
           StructGet (typeidx, i, None);
         ];
         compile_coerce ctxt Lower.field_rep (Lower.pat_rep ()) pat_ty;
-        compile_pattern ctxt state fail pI;
+        compile_pattern ctxt state fail pI funcloc_opt;
       end
     ) ps
   | Ast.PVariant (lbl, pat) -> ignore (lbl, pat); failwith "not implemented"
@@ -316,7 +668,7 @@ and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_
     None
   | Ast.Variant _ -> failwith "not implemented"
   | Ast.Lambda _ -> Some (compile_func ctxt state exp)
-  | Ast.RecLambda _ -> failwith "not implemented"
+  | Ast.RecLambda (var, abs) -> Some (compile_func_rec ctxt state (Ast.Lambda abs) var)
 
     (* functions *)
 
@@ -325,13 +677,21 @@ and compile_func ctxt state e : Lower.func_loc =
   def ctxt;
   func_loc
 
-and compile_func_staged ctxt state (rec_xs : 'a Ast.VariableMap.t) f : Lower.func_loc * _ * _ =
+and compile_func_rec ctxt (state : Ty.state) e rec_var : Lower.func_loc = 
+  let _, ty = Ast.VariableMap.find rec_var state.variables in 
+  let recs = Ast.VariableMap.add rec_var ty Ast.VariableMap.empty in
+  let func_loc, def, _fixup = compile_func_staged ctxt state recs e in
+  def ctxt;
+  func_loc
+
+and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower.func_loc * _ * _ =
   let emit ctxt = List.iter (emit_instr ctxt) in
   let vars = filter_vars ctxt (Ty.free_exp state f) in
   let ty, _ = Ty.infer_expression state f in
   let rec flat ps (e : Ast.expression) =
     match e with
     | Ast.Lambda (p, Ast.Return x) -> flat (p::ps) x 
+    | Ast.RecLambda (var, (p, Ast.Return x)) -> flat ((Ast.PVar var) :: p :: ps) x 
     | _ ->
       let fn, def_func = emit_func_deferred ctxt in
       let envflds, fixups = Lower.lower_clos_env ctxt vars rec_xs in
@@ -356,7 +716,7 @@ and compile_func_staged ctxt state (rec_xs : 'a Ast.VariableMap.t) f : Lower.fun
               | TotalPat ->
                 compile_load_arg ctxt i arg0 argv_opt;
                 compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
-                compile_pattern ctxt state (-1) pI
+                compile_pattern ctxt state (-1) pI None
               | PartialPat -> assert false
             ) ps
           else
@@ -370,11 +730,11 @@ and compile_func_staged ctxt state (rec_xs : 'a Ast.VariableMap.t) f : Lower.fun
                   | TotalPat ->
                     compile_load_arg ctxt i arg0 argv_opt;
                     compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
-                    compile_pattern ctxt state (-1) pI
+                    compile_pattern ctxt state (-1) pI None
                   | PartialPat ->
                     compile_load_arg ctxt i arg0 argv_opt;
                     compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
-                    compile_pattern ctxt state 0 pI;
+                    compile_pattern ctxt state 0 pI None;
                 ) ps;
                 emit ctxt [Br (1)];
               );
@@ -407,10 +767,57 @@ and compile_func_staged ctxt state (rec_xs : 'a Ast.VariableMap.t) f : Lower.fun
       Lower.{funcidx = fn; typeidx = closN; arity = List.length ps}, def, fixup
   in flat [] f
 
-let compile_computation ctxt state = function
+let rec compile_computation ctxt state comp dst = 
+  let emit ctxt = List.iter (emit_instr ctxt) in
+  match comp with
   | Ast.Return exp -> compile_expression ctxt state exp Lower.rigid_rep 
   | Ast.Do (comp, abs) -> ignore (comp, abs); failwith "not implemented" 
-  | Ast.Match (exp, abs_ls) -> let comp_exp = compile_expression ctxt state exp in ignore (comp_exp, abs_ls); failwith "not implemented" 
+  | Ast.Match (exp, []) -> 
+    ignore (compile_expression ctxt state exp (Lower.pat_rep ()));
+    emit ctxt [Unreachable;];
+    None
+  | Ast.Match (exp, abs_ls) -> 
+    let t1, _ = Ty.infer_expression state exp in
+    let ty, _ = Ty.infer_computation state comp in
+    let tmp = emit_local ctxt ({ltype = Lower.lower_value_type ctxt (Lower.tmp_rep ()) t1}) in
+    let block bt es = Block (bt, es) in
+    ignore (compile_expression ctxt state exp (Lower.tmp_rep ()));
+    emit ctxt [
+      LocalSet (tmp);
+    ];
+    let bt = Lower.lower_block_type ctxt dst ty in
+    emit_block ctxt block bt (fun ctxt ->
+      let ends_with_partial =
+        List.fold_left (fun _ (pI, cI) ->
+          match classify_pat pI with
+          | IrrelevantPat ->
+            ignore (compile_computation ctxt state cI dst);
+            emit ctxt [Br 0];
+            false
+          | TotalPat ->
+            let ctxt = Lower.enter_scope ctxt LocalScope in
+            let typ, _, _ = Ty.infer_pattern state pI in
+            emit ctxt [LocalGet (tmp)];
+            compile_coerce ctxt (Lower.tmp_rep ()) (Lower.pat_rep ()) typ;
+            compile_pattern ctxt state (-1) pI None;
+            ignore (compile_computation ctxt state cI dst);
+            emit ctxt [Br 0];
+            false
+          | PartialPat ->
+            let ctxt = Lower.enter_scope ctxt LocalScope in
+            emit_block ctxt block (ValBlockType None)(fun ctxt ->
+              emit ctxt [LocalGet tmp];
+              compile_coerce ctxt (Lower.tmp_rep ()) (Lower.pat_rep ()) t1;
+              compile_pattern ctxt state 0 pI None;
+              ignore (compile_computation ctxt state cI dst);
+              emit ctxt [Br 1];
+            );
+            true
+        ) true abs_ls 
+      in
+      if ends_with_partial then emit ctxt [Unreachable]
+    );
+    None
   | Ast.Apply (exp1, exp2) -> 
     match exp1 with 
     | (RecLambda _ | Lambda _) -> ignore (exp1, exp2); failwith "not implemented"

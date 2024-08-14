@@ -77,6 +77,7 @@ type instr =
   | FloatConst of num_type * float
   | LocalGet of int
   | LocalSet of int
+  | LocalTee of int
   
   (* Arithmetic operations *)
   | Add of num_type 
@@ -86,9 +87,11 @@ type instr =
   | Shl of num_type
   | Shr of num_type
   | Ne of num_type
+  | Eqz of num_type
   
   (* Control flow *)
   | Call of int
+  | CallRef of int
   | Return
   | If of block_type * instr list * instr list  (* (if (then ... ) (else ... )) *)
   | Block of block_type * instr list  (* (block ... ) *)
@@ -105,6 +108,7 @@ type instr =
 
   (* globals *)
   | GlobalGet of int
+  | GlobalSet of int
   (* Parametric instucrions *)
   | Drop
 
@@ -112,6 +116,7 @@ type instr =
   | ArrayNew of int * initop 
   | ArrayGet of int * extension option
   | ArraySet of int 
+  | ArrayLen
   (* Reference types operations *)
 
   | RefNull of heap_type
@@ -481,6 +486,7 @@ let rec sexpr_of_instr e =
   | FloatConst (nt, f) -> Printf.sprintf "%s.const %f" (string_of_num_type nt) f, []
   | LocalGet idx -> Printf.sprintf "local.get %d" idx, []
   | LocalSet idx -> Printf.sprintf "local.set %d" idx, []
+  | LocalTee idx -> Printf.sprintf "local.tee %d" idx, []
   | Add nt -> Printf.sprintf "%s.add" (string_of_num_type nt), []
   | Sub nt -> Printf.sprintf "%s.sub" (string_of_num_type nt), []
   | Mul nt -> Printf.sprintf "%s.mul" (string_of_num_type nt), []
@@ -488,7 +494,9 @@ let rec sexpr_of_instr e =
   | Shl nt -> Printf.sprintf "%s.shl" (string_of_num_type nt), []
   | Shr nt -> Printf.sprintf "%s.shr" (string_of_num_type nt), []
   | Ne nt -> Printf.sprintf "%s.ne" (string_of_num_type nt), []
+  | Eqz nt -> Printf.sprintf "%s.eqz" (string_of_num_type nt), []
   | Call idx -> Printf.sprintf "call %d" idx, []
+  | CallRef idx -> Printf.sprintf "call_ref %d" idx, []
   | Return -> "return", []
   | If (bt, es1, es2) -> 
     "if", sexpr_of_block_type bt @
@@ -506,6 +514,7 @@ let rec sexpr_of_instr e =
   | ArrayNew (idx, op) -> Printf.sprintf "array.new%s %d" (string_of_initop op) idx, []
   | ArrayGet (x, exto) -> Printf.sprintf "array.get%s %d" (opt_s string_of_extension exto) x, []
   | ArraySet x -> Printf.sprintf "array.set %d" x, []
+  | ArrayLen -> Printf.sprintf "array.len", []
   | RefNull ht -> Printf.sprintf "ref.null" , [Atom (string_of_heap_type ht)]
   | RefAsNonNull -> "ref.as_non_null", []
   | RefEq -> "ref.eq", []
@@ -514,6 +523,7 @@ let rec sexpr_of_instr e =
   | RefI31 -> "ref.i31", [] 
   | RefCast t -> "ref.cast", [Atom (str_of_ref_type t)]
   | GlobalGet idx -> Printf.sprintf "global.get %d" idx, []
+  | GlobalSet idx -> Printf.sprintf "global.set %d" idx, []
   | I31Get exto -> Printf.sprintf "i31.get%s" (string_of_extension exto), []
   in 
   Node (head, inner)
