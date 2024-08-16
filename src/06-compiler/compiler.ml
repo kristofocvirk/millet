@@ -824,18 +824,19 @@ let rec compile_computation ctxt state comp dst =
     | (Var _) -> ignore (exp1,exp2); failwith "not implemented"
     | _ -> failwith "not possible"
 
-
-let compile_ty_def = function
- | Ast.TySum _ -> failwith "not implemented"
- | Ast.TyInline _ -> failwith "not implemented"
+let compile_ty_defs ctxt state ty_def = 
+  ignore (ctxt, state);
+  match ty_def with 
+  | Ast.TySum variants -> ()
+  | Ast.TyInline _ -> ()
 
 let compile_command ctxt state = function
-  | Ast.TyDef _ -> failwith "not implemented" 
+  | Ast.TyDef ty_defs -> List.iter (compile_ty_defs ctxt state) ty_defs
   | Ast.TopLet (name, exp) -> 
     ignore name;
     (match exp with
-    | Ast.Const _ -> compile_expression ctxt state exp Lower.rigid_rep
-    | Ast.Annotated _ -> compile_expression ctxt state exp Lower.rigid_rep
+    | Ast.Const _ -> ignore (compile_expression ctxt state exp Lower.rigid_rep)
+    | Ast.Annotated _ -> ignore (compile_expression ctxt state exp Lower.rigid_rep)
     | Ast.Tuple _ | Ast.Var _ | Ast.Variant _  -> failwith "not implemented"
     | Ast.Lambda _ | Ast.RecLambda _ -> failwith "not implemented"
     )
