@@ -83,8 +83,8 @@ let clos_env_idx = 2  (* first environment entry *)
 
 (* Environment *)
 
-type data_con = {tag : int32; typeidx : int32; arity : int}
-type data = (string * data_con) list
+type data_con = {tag : int; typeidx : int}
+type data = (Ast.label option * data_con) list
 type env = (loc * func_loc option, data) Env.env
 type scope = PreScope | LocalScope | GlobalScope
 
@@ -165,25 +165,38 @@ and lower_heap_type ctxt t : Wasm.heap_type =
 and lower_anycon_type ctxt : int =
   emit_type ctxt (sub [] (Wasm.DefStructT (Wasm.StructT [Wasm.FieldT (Wasm.Cons, (Wasm.ValStorageT (Wasm.NumT Wasm.I32T)))])))
 
-and lower_con_type ctxt ts : int =
-  if ts = [] then -1 else
+and lower_sum_type ctxt t : int =
   let anycon = lower_anycon_type ctxt in
-  let vts = List.map (lower_value_type ctxt field_rep) ts in
-  let fts = List.map (fun x -> Wasm.FieldT (Wasm.Cons, Wasm.ValStorageT x)) vts in
-  emit_type ctxt (sub [Wasm.VarHT (Wasm.StatX anycon)] (Wasm.DefStructT (Wasm.StructT (field (Wasm.NumT Wasm.I32T) :: fts))))
+  match t with  
+  | None -> emit_type ctxt (sub [Wasm.VarHT (Wasm.StatX anycon)] (Wasm.DefStructT (Wasm.StructT (field (Wasm.NumT Wasm.I32T) :: []))))
+  | Some x -> 
+  let vt = lower_value_type ctxt field_rep x in
+  let ft = (fun x -> Wasm.FieldT (Wasm.Cons, Wasm.ValStorageT x)) vt in
+  emit_type ctxt (sub [Wasm.VarHT (Wasm.StatX anycon)] (Wasm.DefStructT (Wasm.StructT (field (Wasm.NumT Wasm.I32T) :: ft :: []))))
+
+and lower_inline_type ctxt t : int = 
+  let anycon = lower_anycon_type ctxt in
+  let vt = lower_value_type ctxt field_rep t in
+  let ft = (fun x -> Wasm.FieldT (Wasm.Cons, Wasm.ValStorageT x)) vt in
+  emit_type ctxt (sub [Wasm.VarHT (Wasm.StatX anycon)] (Wasm.DefStructT (Wasm.StructT (field (Wasm.NumT Wasm.I32T) :: ft :: []))))
+
+
 
 and lower_var_type ctxt t =
+  let rec arity f = 
+    match f with 
+    | Ast.TyArrow (_, to_ty) -> 1 + arity to_ty
+    | _ -> 0
+  in
   match t with
   | Ast.TyConst Const.FloatTy ->
     emit_type ctxt (sub [] (Wasm.DefStructT (Wasm.StructT [field (Wasm.NumT Wasm.F64T)])))
   | Ast.TyTuple ts ->
     let ts = List.map (lower_value_type ctxt field_rep) ts in
     emit_type ctxt (sub [] (Wasm.DefStructT  (Wasm.StructT (List.map field ts))))
-  | Ast.TyArrow (_, _) -> failwith "TODO lower_var_type functions"
-    (*match !arity_opt with
-    | T.KnownArity arity -> snd (lower_func_type ctxt arity)
-    | T.UnknownArity | T.VariableArity -> lower_anyclos_type ctxt 
-    *)
+  | Ast.TyArrow (_, _) as x -> 
+    let num_args = arity x in
+    snd (lower_func_type ctxt num_args)
   | _ -> assert false
 
 and lower_anyclos_type ctxt : int =

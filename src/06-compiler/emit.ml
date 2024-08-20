@@ -159,13 +159,6 @@ let emit_func_import ctxt  mname name ft =
   emit_import ctxt mname name (FuncImport (typeidx));
   implicit_entity ctxt.int.funcs
 
-let emit_global_import ctxt mname name mut t =
-  emit_import ctxt mname name (GlobalImport (GlobalT (t, mut)));
-  implicit_entity ctxt.int.globals
-
-let emit_memory_import ctxt mname name min max =
-  emit_import ctxt mname name (MemoryImport (MemoryT {min; max}));
-  implicit_entity ctxt.int.memories
 
 let emit_export descf ctxt name idx =
   let name = decode name in

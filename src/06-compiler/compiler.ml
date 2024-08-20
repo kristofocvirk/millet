@@ -179,23 +179,6 @@ let compile_push_args ctxt n shift compile_eI =
       ]
     done
 
-let compile_load_arg ctxt i arg argv_opt =
-  let emit ctxt = List.iter (emit_instr ctxt) in
-  match argv_opt with
-  | None ->
-    assert (i < max_func_arity);
-    emit ctxt [
-      LocalGet (arg-1 + i);
-    ]
-  | Some argv ->
-    emit ctxt [
-      LocalGet(arg-1);
-      IntConst (I32T, i);
-      RefI31;
-      ArrayGet (argv, None);
-      RefAsNonNull;
-    ]
-
 let compile_load_args ctxt i j shift arg0 src_argv_opt =
   assert (j <= max_func_arity || src_argv_opt <> None);
   if j - i > max_func_arity && i = 0 then
@@ -472,7 +455,7 @@ and compile_func_curry arity ctxt typeidx=
 let compile_var find_var (ctxt : Lower.ctxt) x =
   let loc, funcloc_opt = find_var ctxt x ctxt.ext.envs in
   (match loc with
-  | Lower.PreLoc idx -> ignore idx; failwith "Preloc val_var"
+  | Lower.PreLoc _ -> failwith "Preloc val_var"
     (*let _, l = List.nth Prelude.vals (idx) in
     compile_lit ctxt l*) 
   | Lower.LocalLoc idx ->
@@ -497,7 +480,7 @@ let compile_val_var ctxt x t dst =
     if Lower.null_rep rep = Null && Lower.null_rep dst <> Null then
       emit_instr ctxt Wasm.RefAsNonNull 
 
-      let compile_val_var_bind_pre ctxt x t funcloc_opt =
+  let compile_val_var_bind_pre ctxt x t funcloc_opt =
   let scope, env = Lower.current_scope ctxt in
   let rep = Lower.scope_rep scope in
   let vt =
@@ -749,7 +732,7 @@ and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower
         if fixups <> [] then begin
           let tmp = emit_local ctxt ({ltype = RefT (Null, VarHT (StatX closNenv))}) in
           let rttidx = (NoNull, VarHT (StatX closNenv)) in
-          compile_val_var ctxt Source.(self) ty Lower.ref_rep;
+          compile_val_var ctxt self ty Lower.ref_rep;
           emit ctxt [
             (*ref_as_data;*) 
             RefCast (rttidx);
@@ -757,7 +740,7 @@ and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower
           ];
           List.iter (fun (x, t, i) ->
             emit ctxt [Wasm.LocalGet (tmp)];
-            compile_val_var ctxt Source.(x) t (Lower.clos_rep ());
+            compile_val_var ctxt x t (Lower.clos_rep ());
             emit ctxt [
               StructGet ((closNenv), (Lower.clos_env_idx + i), None);
             ];
@@ -824,20 +807,32 @@ let rec compile_computation ctxt state comp dst =
     | (Var _) -> ignore (exp1,exp2); failwith "not implemented"
     | _ -> failwith "not possible"
 
-let compile_ty_defs ctxt state ty_def = 
-  ignore (ctxt, state);
-  match ty_def with 
-  | Ast.TySum variants -> ()
-  | Ast.TyInline _ -> ()
+let compile_ty_defs ctxt ty_defs = 
+  let _, env = Lower.current_scope ctxt in
+  let compile_ty_def ty_def = 
+    match ty_def with 
+    | _, name, ty -> 
+      match ty with 
+      | Ast.TyInline t -> 
+        let tyidx = Lower.lower_inline_type ctxt t in 
+         env := Env.extend_typ !env name ((@@) Lower.([(None, {tag = -1; typeidx = tyidx})]))
+      | Ast.TySum t_ls -> 
+        let x = (List.mapi (fun i (lbl, ty_opt) -> 
+          let tyidx = (Lower.lower_sum_type ctxt ty_opt) in 
+          Lower.((Some lbl, {tag = i; typeidx = tyidx})))
+        ) t_ls in
+         env := Env.extend_typ !env name ((@@) x)
+  in
+  List.iter compile_ty_def ty_defs
 
-let compile_command ctxt state = function
-  | Ast.TyDef ty_defs -> List.iter (compile_ty_defs ctxt state) ty_defs
+let compile_command ctxt state comp = 
+  match comp with 
+  | Ast.TyDef ty_defs -> compile_ty_defs ctxt ty_defs
   | Ast.TopLet (name, exp) -> 
-    ignore name;
     (match exp with
-    | Ast.Const _ -> ignore (compile_expression ctxt state exp Lower.rigid_rep)
-    | Ast.Annotated _ -> ignore (compile_expression ctxt state exp Lower.rigid_rep)
-    | Ast.Tuple _ | Ast.Var _ | Ast.Variant _  -> failwith "not implemented"
     | Ast.Lambda _ | Ast.RecLambda _ -> failwith "not implemented"
+    | _ -> 
+      let var_ty, _ = Ty.infer_expression state exp in
+      compile_val_var_bind ctxt name var_ty (Lower.global_rep ()) None
     )
-  | Ast.TopDo _ -> failwith "not implemented" 
+  | Ast.TopDo cmp -> ignore cmp; failwith "not implemented" 
