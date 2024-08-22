@@ -97,6 +97,7 @@ let rec free_vars = function
 module Variable = Symbol.Make ()
 module VariableMap = Map.Make (Variable)
 module Label = Symbol.Make ()
+module LabelMap = Map.Make (Label)
 
 type variable = Variable.t
 type label = Label.t

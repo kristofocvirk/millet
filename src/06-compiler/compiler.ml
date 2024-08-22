@@ -564,8 +564,6 @@ let compile_alloc_clos ctxt fn arity vars rec_xs closNenv=
     StructNew (closNenv, Explicit);
   ]
 
-
-
   (* patterns *)
 
 let rec classify_pat = function
@@ -609,7 +607,29 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
         compile_pattern ctxt state fail pI funcloc_opt;
       end
     ) ps
-  | Ast.PVariant (lbl, pat) -> ignore (lbl, pat); failwith "not implemented"
+  | Ast.PVariant (lbl, pat) -> 
+    (let _, env = Lower.current_scope ctxt in
+    match (Env.find_lbl lbl !env).it with 
+    | {tag = i; typeidx = t} -> 
+      let tmp = emit_local ctxt {ltype = RefT (Wasm.Null, VarHT (StatX t))} in
+      emit ctxt [
+        LocalGet tmp;
+        StructGet (t, 0, None);
+        IntConst (I32T, i);
+        BrIf fail
+      ];
+      match pat with 
+      | None -> ()
+      | Some x -> 
+        (let pat_ty, _, _ = Ty.infer_pattern state x in
+          emit ctxt [
+            LocalGet tmp;
+            StructGet (t, 1, None);
+          ];
+          compile_coerce ctxt Lower.field_rep (Lower.pat_rep ()) pat_ty;
+          compile_pattern ctxt state fail x funcloc_opt;
+        )
+    )
   | Ast.PConst const as c -> 
     let typ, _, _ = Ty.infer_pattern state c in 
     compile_coerce ctxt (Lower.pat_rep ()) Lower.rigid_rep typ;
@@ -621,7 +641,10 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
       emit ctxt [Wasm.Ne F64T] 
     | Ast.TyConst (StringTy) -> failwith "not implemented"
     | _ -> assert false
-    )
+    );
+    emit ctxt [
+      BrIf fail
+    ]
 
     (* expressions *)
 and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_loc option= 
@@ -650,7 +673,8 @@ and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_
     ];
     compile_coerce ctxt Lower.rigid_rep dst ty;
     None
-  | Ast.Variant _ -> failwith "not implemented"
+  | Ast.Variant (lbl, Some e) -> ignore (lbl, e); failwith "not implemented"
+  | Ast.Variant (lbl, None) -> ignore (lbl); failwith "not implemented"
   | Ast.Lambda _ -> Some (compile_func ctxt state exp)
   | Ast.RecLambda (var, abs) -> Some (compile_func_rec ctxt state (Ast.Lambda abs) var)
 
@@ -823,9 +847,50 @@ let rec compile_computation ctxt state comp dst =
     );
     None
   | Ast.Apply (exp1, exp2) -> 
+    let ty, _= Ty.infer_computation state comp in 
     match exp1 with 
-    | (RecLambda _ | Lambda _) -> ignore (exp1, exp2); failwith "not implemented"
-    | (Var _) -> ignore (exp1,exp2); failwith "not implemented"
+    | (RecLambda _ | Lambda _) -> 
+      (match compile_expression ctxt state exp1 Lower.rigid_rep with
+      | Some {funcidx = f; arity = n; _} when n = 1 ->
+        compile_push_args ctxt 1 0 (fun i ->
+          ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
+        );
+        emit ctxt [
+          Call (f);
+        ]
+      | Some {typeidx = t; arity = n; _} ->
+        compile_push_args ctxt 1 0 (fun i ->
+          ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
+        );
+        emit ctxt [
+          Call (compile_func_apply n ctxt t);
+        ]
+      | _ -> failwith "not possible"
+      );
+
+      compile_coerce ctxt Lower.arg_rep dst ty;
+      None
+    | (Var x) -> 
+      let _, env = Lower.current_scope ctxt in
+      (match (Env.find_func x !env).it with
+      | {funcidx = f; arity = n; _} when n = 1 ->
+        compile_push_args ctxt 1 0 (fun i ->
+          ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
+        );
+        emit ctxt [
+          Call f;
+        ]
+      | {typeidx = t; arity = n; _} ->
+        compile_push_args ctxt 1 0 (fun i ->
+          ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
+        );
+        emit ctxt [
+          Call (compile_func_apply n ctxt t);
+        ]
+      );
+      compile_coerce ctxt Lower.arg_rep dst ty;
+      None
+
     | _ -> failwith "not possible"
 
 let compile_ty_defs ctxt ty_defs = 
@@ -840,6 +905,7 @@ let compile_ty_defs ctxt ty_defs =
       | Ast.TySum t_ls -> 
         let x = (List.mapi (fun i (lbl, ty_opt) -> 
           let tyidx = (Lower.lower_sum_type ctxt ty_opt) in 
+          env := Env.extend_lbl !env lbl ((@@) Lower.{tag = i; typeidx = tyidx});
           Lower.((Some lbl, {tag = i; typeidx = tyidx})))
         ) t_ls in
          env := Env.extend_typ !env name ((@@) x)

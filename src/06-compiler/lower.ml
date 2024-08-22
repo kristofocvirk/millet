@@ -85,7 +85,7 @@ let clos_env_idx = 2  (* first environment entry *)
 
 type data_con = {tag : int; typeidx : int}
 type data = (Ast.label option * data_con) list
-type env = (loc * func_loc option, data, func_loc) Env.env
+type env = (loc * func_loc option, data, data_con, func_loc) Env.env
 type scope = PreScope | LocalScope | GlobalScope
 
 let make_env () =
