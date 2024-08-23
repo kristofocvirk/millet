@@ -15,7 +15,8 @@ type ('v, 't, 'l, 'f) env =
   { vals : ('v, unit) phrase VariableMap.t;
     typs : ('t, unit) phrase TyNameMap.t;
     lbls : ('l, unit) phrase LabelMap.t;
-    funcs : ('f, unit) phrase VariableMap.t
+    funcs : ('f, unit) phrase VariableMap.t;
+    runs : int
   }
 
 let empty =
@@ -23,10 +24,13 @@ let empty =
     typs = TyNameMap.empty;
     lbls = LabelMap.empty;
     funcs = VariableMap.empty;
+    runs = 0
   }
 
 let not_found =
   raise Not_found
+
+let update_runs env = {env with runs = env.runs + 1}
 
 let extend_val env x v = {env with vals = VariableMap.add x v env.vals}
 let extend_typ env x v = {env with typs = TyNameMap.add x v env.typs}

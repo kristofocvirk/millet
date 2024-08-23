@@ -449,6 +449,65 @@ and compile_func_curry arity ctxt typeidx=
     )
   )
 
+(* strings *)
+
+let lower_text_type ctxt : int =
+  emit_type ctxt (SubT (NoFinal, [], DefArrayT (ArrayT (FieldT (Var, PackStorageT Pack8)))))
+
+
+let compile_text_eq ctxt : int =
+  let block bt es = Block (bt, es) in
+  let loop bt es = Loop (bt, es) in
+  let if_ bt es1 es2 = If (bt, es1, es2) in
+  Emit.lookup_intrinsic ctxt "text_eq" (fun _ ->
+    let text = lower_text_type ctxt in
+    let textref = (RefT (NoNull, VarHT (StatX text))) in
+    emit_func ctxt [textref; textref] [NumT I32T] (fun ctxt _ ->
+      let arg1 = emit_param ctxt in
+      let arg2 = emit_param ctxt in
+      let len = emit_local ctxt {ltype = NumT I32T} in
+      List.iter (emit_instr ctxt ) [
+        block (ValBlockType None) (List.map (fun e -> e) [
+          LocalGet (arg1);
+          LocalGet (arg2);
+          RefEq;
+          if_ (ValBlockType None) (List.map (fun e -> e) [
+            IntConst (I32T, 1);
+            Return 
+          ]) [];
+          LocalGet (arg1);
+          ArrayLen;
+          LocalGet (arg2);
+          ArrayLen;
+          LocalTee (len);
+          Ne I32T;
+          BrIf (0);
+          block (ValBlockType None) (List.map (fun e -> e) [
+            loop (ValBlockType None) (List.map (fun e -> e) [
+              LocalGet (len);
+              Eqz I32T;
+              BrIf 1;
+              LocalGet (arg1);
+              LocalGet (len);
+              IntConst (I32T, 1);
+              Sub I32T;
+              LocalTee (len);
+              ArrayGet (text, Some ZX);
+              LocalGet (arg2);
+              LocalGet (len);
+              ArrayGet (text, Some ZX);
+              Ne I32T;
+              BrIf 2;
+              Br 0;
+            ])
+          ]);
+          IntConst (I32T, 1);
+          Return;
+        ]);
+        IntConst (I32T, 0);
+      ]
+    )
+  )
 
 (* variables *)
 
@@ -584,8 +643,11 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
   | Ast.PVar var -> 
     let t, _, _ = Ty.infer_pattern state pat in
     compile_val_var_bind ctxt var t (Lower.pat_rep ()) funcloc_opt 
-  | Ast.PAnnotated (pat, _) -> compile_pattern ctxt state fail pat funcloc_opt
-  | Ast.PAs (pat, var) -> ignore (pat,var); failwith "not implemented"
+  | Ast.PAnnotated (p, _) -> compile_pattern ctxt state fail p funcloc_opt
+  | Ast.PAs (p, var) -> 
+    let t, _, _ = Ty.infer_pattern state pat in
+    compile_pattern ctxt state fail p funcloc_opt;
+    compile_val_var_bind ctxt var t (Lower.pat_rep ()) funcloc_opt
   | Ast.PTuple ps -> 
     let typ, _, _ = Ty.infer_pattern state pat in 
     let typeidx = Lower.lower_var_type ctxt typ in
@@ -639,7 +701,8 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
       emit ctxt [Wasm.Ne I32T]
     | Ast.TyConst (FloatTy) -> 
       emit ctxt [Wasm.Ne F64T] 
-    | Ast.TyConst (StringTy) -> failwith "not implemented"
+    | Ast.TyConst (StringTy) -> 
+      emit ctxt [Call (compile_text_eq ctxt); Eqz I32T]
     | _ -> assert false
     );
     emit ctxt [
@@ -655,13 +718,31 @@ and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_
     compile_val_var ctxt var ty dst;
     let _, func_loc_opt = find_val_var ctxt var ctxt.ext.envs in
     func_loc_opt
-  | Ast.Const (Const.Integer i) -> emit ctxt [IntConst (I32T, i)]; None 
-  | Ast.Const (Const.String s) -> ignore s; failwith "not implemented"
+  | Ast.Const (Const.Integer i) -> 
+    let ty, _ = Ty.infer_expression state exp in
+    emit ctxt [IntConst (I32T, i)]; 
+    compile_coerce ctxt Lower.rigid_rep dst ty;
+    None 
+  | Ast.Const (Const.String s) -> 
+    let ty, _ = Ty.infer_expression state exp in
+    let addr = emit_active_data ctxt s in
+      emit ctxt [
+        IntConst (I32T, addr);
+      ]; 
+    compile_coerce ctxt Lower.rigid_rep dst ty;
+    None
   | Ast.Const (Const.Boolean b) -> 
+    let ty, _ = Ty.infer_expression state exp in
     (match b with 
     | true ->  emit ctxt [IntConst (I32T, 1)] 
-    | false -> emit ctxt [IntConst (I32T, 0)]); None
-  | Ast.Const (Const.Float f) -> emit ctxt [FloatConst (F64T, f)]; None 
+    | false -> emit ctxt [IntConst (I32T, 0)]);
+    compile_coerce ctxt Lower.rigid_rep dst ty;
+    None
+  | Ast.Const (Const.Float f) -> 
+    let ty, _ = Ty.infer_expression state exp in
+    emit ctxt [FloatConst (F64T, f)]; 
+    compile_coerce ctxt Lower.rigid_rep dst ty;
+    None
   | Ast.Annotated (exp1, _) -> compile_expression ctxt state exp1 dst
   | Ast.Tuple [] -> compile_coerce ctxt Lower.unit_rep dst (Ast.TyTuple []); None
   | Ast.Tuple es -> 
@@ -673,8 +754,33 @@ and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_
     ];
     compile_coerce ctxt Lower.rigid_rep dst ty;
     None
-  | Ast.Variant (lbl, Some e) -> ignore (lbl, e); failwith "not implemented"
-  | Ast.Variant (lbl, None) -> ignore (lbl); failwith "not implemented"
+  | Ast.Variant (lbl, e) -> 
+    let ty, _ = Ty.infer_expression state exp in
+    let _, env = Lower.current_scope ctxt in
+    let data = (Env.find_lbl lbl !env).it in
+    let local_idx = emit_local ctxt ({ltype = RefT (Null, VarHT (StatX data.typeidx))}) in
+    emit ctxt [
+      StructNew (data.typeidx, Explicit);
+      LocalSet local_idx;
+      LocalGet local_idx;
+      IntConst (I32T, data.tag);
+      StructSet (data.typeidx, 0);
+    ];
+    (match e with 
+    | None -> 
+      emit ctxt [LocalGet local_idx]
+    | Some x -> 
+      emit ctxt [
+        LocalGet local_idx;
+      ];
+      ignore (compile_expression ctxt state x (Lower.field_rep));
+      emit ctxt [
+        StructSet (data.typeidx, 1);
+        LocalGet local_idx;
+      ]
+    );
+    compile_coerce ctxt Lower.rigid_rep dst ty;
+    None
   | Ast.Lambda _ -> Some (compile_func ctxt state exp)
   | Ast.RecLambda (var, abs) -> Some (compile_func_rec ctxt state (Ast.Lambda abs) var)
 
@@ -929,4 +1035,10 @@ let compile_command ctxt state comp =
       let var_ty, _ = Ty.infer_expression state exp in
       compile_val_var_bind ctxt name var_ty (Lower.global_rep ()) None
     )
-  | Ast.TopDo cmp -> ignore cmp; failwith "not implemented" 
+  | Ast.TopDo cmp -> 
+    let _, env = Lower.current_scope ctxt in
+    let lam = Ast.Lambda (Ast.PNonbinding,cmp) in
+    let func_loc = compile_func ctxt state lam in 
+    let name = "run_" ^ (string_of_int !env.runs) in
+    emit_func_export ctxt name func_loc.funcidx;
+    env := Env.update_runs !env 
