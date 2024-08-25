@@ -319,7 +319,7 @@ let rec free_pat p =
   match p with
   | Ast.PAnnotated (pat, _) -> free_pat pat
   | PAs (pat, _) -> free_pat pat
-  | PTuple ps -> list free_pat ps
+  | PTuple ps ->  list free_pat ps
   | PVariant (_, pat) ->
     (match pat with
     | Some x -> free_pat x

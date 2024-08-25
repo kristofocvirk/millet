@@ -2,6 +2,7 @@ open Utils
 module Ast = Language.Ast
 module Backend = CliInterpreter
 module Loader = Loader.Loader (Backend)
+module Comp = Compiler
 
 type config = { filenames : string list; use_stdlib : bool ; compile : bool}
 
@@ -50,12 +51,12 @@ let main () =
       (let state = Loader.load_source Loader.initial_state Loader.stdlib_source
       in
       let state' = List.fold_left Loader.load_file state config.filenames in
-      let run_state = Backend.run state'.backend in
-      Backend.compile run_state)
+      Compiler.compile_prog state'.cmds state'.typechecker)
+      |> ignore
     | (false, true) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
-      let run_state = Backend.run state'.backend in
-      Backend.compile run_state)
+      Compiler.compile_prog state'.cmds state'.typechecker)
+      |> ignore
     | (false, false) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
       let run_state = Backend.run state'.backend in

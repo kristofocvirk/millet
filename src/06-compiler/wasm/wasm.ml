@@ -70,6 +70,9 @@ type block_type = VarBlockType of int | ValBlockType of val_type option
 
 type initop = Explicit | Implicit
 
+type ('t, 'p) memop = {ty : 't; align : int; offset : int; pack : 'p}
+type loadop = (num_type, (pack_size * extension) option) memop
+
 (* Instructions *)
 type instr =
   (* Constants *)
@@ -86,6 +89,7 @@ type instr =
   | Div of num_type 
   | Shl of num_type
   | Shr of num_type
+  | ShrU of num_type
   | Ne of num_type
   | Eqz of num_type
   
@@ -127,6 +131,13 @@ type instr =
   | RefI31 
   | I31Get of extension
   | RefCast of ref_type
+
+  (* memory *)
+  | MemoryInit of int
+  | MemoryGrow 
+  | MemorySize
+  | Load of loadop  
+
 
 (*local*)
 type const = instr list
@@ -280,6 +291,9 @@ let string_of_mut s = function
   | Cons -> s
   | Var -> "(mut " ^ s ^ ")"
 
+let num_size = function
+  | I32T | F32T -> 4
+  | I64T | F64T -> 8
 
 let string_of_num_type = function
   | I32T -> "i32"
@@ -411,6 +425,14 @@ let string_of_module_type = function
       List.map (fun et -> "export " ^ string_of_export_type et ^ "\n") ets
     )
 
+(* ast strings *)
+
+let pack_size = function
+  | Pack8 -> "8"
+  | Pack16 -> "16"
+  | Pack32 -> "32"
+  | Pack64 -> "64"
+
 let list f xs = List.map f xs
 let list_of_opt = function None -> [] | Some x -> [x]
 let tab head f xs = if xs = [] then [] else [Node (head, list f xs)]
@@ -478,6 +500,18 @@ let sexpr_of_block_type = function
   | VarBlockType x -> [Node ("type " ^ string_of_int x, [])]
   | ValBlockType ts -> decls "result" (list_of_opt ts)
 
+let memop name typ {ty; align; offset; _} sz =
+  typ ty ^ "." ^ name ^
+  (if offset = 0 then "" else " offset=" ^ string_of_int offset) ^
+  (if 1 lsl align = sz then "" else " align=" ^ string_of_int (1 lsl align))
+
+let loadop op =
+  match op.pack with
+  | None -> memop "load" string_of_num_type op (num_size op.ty)
+  | Some (sz, ext) ->
+    memop ("load" ^ pack_size sz ^ string_of_extension ext) string_of_num_type op (packed_size sz)
+
+
 (* Function to convert instructions to string *)
 let rec sexpr_of_instr e = 
   let head, inner =
@@ -493,6 +527,7 @@ let rec sexpr_of_instr e =
   | Div nt -> Printf.sprintf "%s.div" (string_of_num_type nt), []
   | Shl nt -> Printf.sprintf "%s.shl" (string_of_num_type nt), []
   | Shr nt -> Printf.sprintf "%s.shr" (string_of_num_type nt), []
+  | ShrU nt -> Printf.sprintf "%s.shr_u" (string_of_num_type nt), []
   | Ne nt -> Printf.sprintf "%s.ne" (string_of_num_type nt), []
   | Eqz nt -> Printf.sprintf "%s.eqz" (string_of_num_type nt), []
   | Call idx -> Printf.sprintf "call %d" idx, []
@@ -525,6 +560,10 @@ let rec sexpr_of_instr e =
   | GlobalGet idx -> Printf.sprintf "global.get %d" idx, []
   | GlobalSet idx -> Printf.sprintf "global.set %d" idx, []
   | I31Get exto -> Printf.sprintf "i31.get%s" (string_of_extension exto), []
+  | MemoryInit x -> Printf.sprintf "memory.init %d" x, []
+  | MemoryGrow -> Printf.sprintf "memory.grow", []
+  | MemorySize -> Printf.sprintf "memory.size", []
+  | Load op -> loadop op, []
   in 
   Node (head, inner)
 

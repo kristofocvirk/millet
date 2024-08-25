@@ -13,6 +13,8 @@ let max_func_arity = 12
 
 let ref_cast idx = Wasm.RefCast (Wasm.NoNull, Wasm.VarHT (Wasm.StatX idx))
 
+  (* coerce *)
+
 let rec compile_coerce ctxt src dst t =
   if src <> dst then
   let emit ctxt = List.iter (Emit.emit_instr ctxt) in
@@ -190,7 +192,7 @@ let compile_load_args ctxt i j shift arg0 src_argv_opt =
     )
 
 
-let rec compile_func_apply arity ctxt typeidx=
+let rec compile_func_apply arity typeidx ctxt=
   assert (arity > 0);
   Emit.lookup_intrinsic ctxt ("func_apply" ^ string_of_int arity) (fun def_fwd ->
     let emit ctxt = List.iter (emit_instr ctxt) in
@@ -244,7 +246,7 @@ let rec compile_func_apply arity ctxt typeidx=
                 (* Apply result to remaining arguments *)
                 compile_load_args ctxt n arity 1 arg0 argv_opt;
                 emit ctxt [
-                  Call (compile_func_apply (arity - n) ctxt typeidx) ;
+                  Call (compile_func_apply (arity - n) typeidx ctxt) ;
                   Return;  (* TODO: should be tail call *)
                 ];
               )
@@ -341,7 +343,7 @@ and compile_func_curry arity ctxt typeidx=
           );
           (* Call target *)
           emit ctxt [
-            Call (compile_func_apply (arity + 1) ctxt typeidx);
+            Call (compile_func_apply (arity + 1) typeidx ctxt);
             Return;  (* TODO: should be tail call *)
           ]
         end else begin
@@ -758,27 +760,17 @@ and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_
     let ty, _ = Ty.infer_expression state exp in
     let _, env = Lower.current_scope ctxt in
     let data = (Env.find_lbl lbl !env).it in
-    let local_idx = emit_local ctxt ({ltype = RefT (Null, VarHT (StatX data.typeidx))}) in
     emit ctxt [
-      StructNew (data.typeidx, Explicit);
-      LocalSet local_idx;
-      LocalGet local_idx;
       IntConst (I32T, data.tag);
-      StructSet (data.typeidx, 0);
     ];
     (match e with 
-    | None -> 
-      emit ctxt [LocalGet local_idx]
+    | None -> ()
     | Some x -> 
-      emit ctxt [
-        LocalGet local_idx;
-      ];
       ignore (compile_expression ctxt state x (Lower.field_rep));
-      emit ctxt [
-        StructSet (data.typeidx, 1);
-        LocalGet local_idx;
-      ]
     );
+    emit ctxt [
+      StructNew (data.typeidx, Explicit);
+    ];
     compile_coerce ctxt Lower.rigid_rep dst ty;
     None
   | Ast.Lambda _ -> Some (compile_func ctxt state exp)
@@ -800,7 +792,8 @@ and compile_func_rec ctxt (state : Ty.state) e rec_var : Lower.func_loc =
 
 and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower.func_loc * _ * _ =
   let emit ctxt = List.iter (emit_instr ctxt) in
-  let vars = filter_vars ctxt (Ty.free_exp state f) in
+  let temporary = Ty.free_exp state f in
+  let vars = filter_vars ctxt temporary in
   let ty, _ = Ty.infer_expression state f in
   let rec flat ps (e : Ast.expression) recs =
     match e with
@@ -969,7 +962,7 @@ let rec compile_computation ctxt state comp dst =
           ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
         );
         emit ctxt [
-          Call (compile_func_apply n ctxt t);
+          Call (compile_func_apply n t ctxt);
         ]
       | _ -> failwith "not possible"
       );
@@ -991,7 +984,7 @@ let rec compile_computation ctxt state comp dst =
           ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
         );
         emit ctxt [
-          Call (compile_func_apply n ctxt t);
+          Call (compile_func_apply n t ctxt);
         ]
       );
       compile_coerce ctxt Lower.arg_rep dst ty;
@@ -1018,9 +1011,10 @@ let compile_ty_defs ctxt ty_defs =
   in
   List.iter compile_ty_def ty_defs
 
-let compile_command ctxt state comp = 
+let compile_command ctxt state comp dst = 
   match comp with 
-  | Ast.TyDef ty_defs -> compile_ty_defs ctxt ty_defs
+  | Ast.TyDef ty_defs -> 
+    compile_ty_defs ctxt ty_defs
   | Ast.TopLet (name, exp) -> 
     (match exp with
     | Ast.Lambda _ -> 
@@ -1033,12 +1027,38 @@ let compile_command ctxt state comp =
       env := Env.extend_func !env name ((@@) (funcloc_opt))
     | _ -> 
       let var_ty, _ = Ty.infer_expression state exp in
-      compile_val_var_bind ctxt name var_ty (Lower.global_rep ()) None
+      compile_val_var_bind ctxt name var_ty dst None
     )
   | Ast.TopDo cmp -> 
     let _, env = Lower.current_scope ctxt in
     let lam = Ast.Lambda (Ast.PNonbinding,cmp) in
     let func_loc = compile_func ctxt state lam in 
     let name = "run_" ^ (string_of_int !env.runs) in
-    emit_func_export ctxt name func_loc.funcidx;
+    emit_func_export ctxt ("func " ^ name) func_loc.funcidx;
     env := Env.update_runs !env 
+
+let rec compile_commands ctxt state ds dst =
+  match ds with
+  | [] ->
+    compile_coerce ctxt Lower.unit_rep dst (Ast.TyTuple [])
+  | [d] ->
+    compile_command ctxt state d dst
+  | d::ds' ->
+    compile_command ctxt state d DropRep;
+    compile_commands ctxt state ds' dst
+
+let compile_prog cmds state : Wasm.module_ =
+  let ctxt = Lower.enter_scope (Lower.make_ctxt ()) GlobalScope in
+  (* Compile declarations directly *)
+  compile_commands ctxt state cmds (Lower.global_rep ());
+  (* Directly emit exports for modules and values *)
+  let _, env = Lower.current_scope ctxt in
+  Env.iter_vals (fun x' locs ->
+    let name = Ast.string_of_expression (Ast.Var x') in
+    let (loc, funcloc_opt) = locs.it in
+    emit_global_export ctxt name (Lower.as_global_loc loc);
+    Option.iter (fun Lower.{funcidx; _} ->
+      emit_func_export ctxt ("func " ^ name) funcidx) funcloc_opt
+  ) !env;
+  (* Generate the WebAssembly module *)
+  Emit.gen_module ctxt

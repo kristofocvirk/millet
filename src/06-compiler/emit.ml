@@ -165,6 +165,10 @@ let emit_export descf ctxt name idx =
   let edesc = descf idx in
   ignore (emit_entity ctxt.int.exports ({name; edesc}))
 
+let emit_memory_import ctxt mname name min max =
+  emit_import ctxt mname name (MemoryImport (MemoryT {min; max}));
+  implicit_entity ctxt.int.memories
+
 let emit_func_export ctxt = emit_export (fun x -> FuncExport x) ctxt
 let emit_global_export ctxt = emit_export (fun x -> GlobalExport x) ctxt
 let emit_memory_export ctxt = emit_export (fun x -> MemoryExport x) ctxt
@@ -247,3 +251,49 @@ let emit_func_ref ctxt idx =
 let emit_start ctxt idx =
   assert (!(ctxt.int.start) = None);
   ctxt.int.start := Some (idx)
+
+
+let compact s =
+  Scc.IntSet.(min_elt s + cardinal s = max_elt s + 1)
+
+let recify sts =
+  let sta = Array.of_list sts in
+  let sccs = Scc.sccs_of_subtypes (Array.map Source.it sta) in
+  assert (List.for_all compact sccs);
+  List.map (fun scc ->
+    match Scc.IntSet.elements scc with
+    | [x] ->
+      Wasm.RecT [sta.(x).it] 
+    | xs ->
+      Wasm.RecT (List.map (fun x -> sta.(x).it) xs)
+  ) (List.sort Scc.IntSet.compare sccs)
+
+
+(* Generation *)
+
+let gen_module ctxt : Wasm.module_ =
+  { Wasm.empty_module with
+    Wasm.start =(match !(ctxt.int.start) with 
+    | None -> None
+    | Some x -> Some {sfunc = x});
+    Wasm.types = recify (get_entities ctxt.int.types);
+    Wasm.globals = get_entities ctxt.int.globals;
+    Wasm.funcs = get_entities ctxt.int.funcs;
+    Wasm.imports = get_entities ctxt.int.imports;
+    Wasm.exports = get_entities ctxt.int.exports;
+    Wasm.datas = get_entities ctxt.int.datas;
+    Wasm.elems =
+      if !(ctxt.int.refs) = Refs.empty then [] else Wasm.[
+        { etype = (NoNull , FuncHT);
+          emode = Declarative;
+          einit = Refs.fold (fun idx consts ->
+            ([RefFunc (idx)]) :: consts) !(ctxt.int.refs) []
+        } 
+      ];
+    Wasm.memories =
+      let memories = get_entities ctxt.int.memories in
+      if get_entities ctxt.int.datas = []
+      || ctxt.int.memories.cnt > 0 then memories else
+      let sz = (!(ctxt.int.data_offset) + (0xffff)) / 0x10000 in
+      [{Wasm.mtype = Wasm.(MemoryT {min = sz; max = Some sz})}]
+  }
