@@ -4,7 +4,7 @@
  *  SIAM Journal on Computing, 1(2), 1972
  *)
 
-module Wasm = Wasm
+module Wasm = Wasm.Types
 
 module IntSet = Set.Make(Int)
 

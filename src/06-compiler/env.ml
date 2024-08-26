@@ -1,4 +1,4 @@
-open Source
+module Source = Wasm.Source
 open Language.Ast
 
 exception Clash of string
@@ -12,10 +12,10 @@ struct
 end
 
 type ('v, 't, 'l, 'f) env =
-  { vals : ('v, unit) phrase VariableMap.t;
-    typs : ('t, unit) phrase TyNameMap.t;
-    lbls : ('l, unit) phrase LabelMap.t;
-    funcs : ('f, unit) phrase VariableMap.t;
+  { vals : ('v, unit) Source.phrase VariableMap.t;
+    typs : ('t, unit) Source.phrase TyNameMap.t;
+    lbls : ('l, unit) Source.phrase LabelMap.t;
+    funcs : ('f, unit) Source.phrase VariableMap.t;
     runs : int
   }
 

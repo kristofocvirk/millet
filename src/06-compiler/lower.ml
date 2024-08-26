@@ -1,5 +1,5 @@
 open Emit
-module Wasm = Wasm
+module Types = Wasm.Types
 module Ast = Language.Ast
 module Const = Language.Const
 module Env = Env
@@ -102,7 +102,7 @@ let scope_rep = function
 
 module ClosKey =
 struct
-  type t = Wasm.val_type list * Wasm.val_type list * Wasm.field_type list
+  type t = Types.val_type list * Types.val_type list * Types.field_type list
   let compare = compare
 end
 
@@ -133,20 +133,20 @@ let current_scope ctxt : scope * env ref =
 
 (* Lowering types *)
 
-let lower_ref null ht : Wasm.ref_type =
+let lower_ref null ht : Types.ref_type =
   match null with
   | Null -> (Null, ht)
   | Nonull -> (NoNull, ht)
 
-let abs = Wasm.EqHT 
+let abs = Types.EqHT 
 let absref = lower_ref Nonull abs
 
-let sub xs st = Wasm.SubT (Wasm.NoFinal ,List.map (fun x -> x) xs, st)
-let field t = Wasm.FieldT (Wasm.Cons, Wasm.ValStorageT t)
-let field_mut t = Wasm.FieldT (Wasm.Var , Wasm.ValStorageT t)
-let ref_ x = Wasm.RefT (Wasm.NoNull, Wasm.VarHT (Wasm.StatX x))
+let sub xs st = Types.SubT (Types.NoFinal ,List.map (fun x -> x) xs, st)
+let field t = Types.FieldT (Types.Cons, Types.ValStorageT t)
+let field_mut t = Types.FieldT (Types.Var , Types.ValStorageT t)
+let ref_ x = Types.RefT (Types.NoNull, Types.VarHT (Types.StatX x))
 
-let rec lower_value_type ctxt rep t : Wasm.val_type =
+let rec lower_value_type ctxt rep t : Types.val_type =
   match t, rep with
   | t, (BlockRep n | BoxedRep n) -> RefT (lower_ref n (lower_heap_type ctxt t))
   | _, BoxedAbsRep n -> RefT (lower_ref n abs)
@@ -156,29 +156,29 @@ let rec lower_value_type ctxt rep t : Wasm.val_type =
   | t, (UnboxedRep n | UnboxedLaxRep n) -> RefT (lower_ref n (lower_heap_type ctxt t))
   | _, DropRep -> assert false
 
-and lower_heap_type ctxt t : Wasm.heap_type =
+and lower_heap_type ctxt t : Types.heap_type =
   match t with
   | Ast.TyConst Const.BooleanTy | Ast.TyConst Const.IntegerTy -> I31HT
   | Ast.TyTuple [] -> EqHT 
-  | t -> (VarHT (Wasm.StatX (lower_var_type ctxt t)))
+  | t -> (VarHT (Types.StatX (lower_var_type ctxt t)))
 
 and lower_anycon_type ctxt : int =
-  emit_type ctxt (sub [] (Wasm.DefStructT (Wasm.StructT [Wasm.FieldT (Wasm.Cons, (Wasm.ValStorageT (Wasm.NumT Wasm.I32T)))])))
+  emit_type ctxt (sub [] (Types.DefStructT (Types.StructT [Types.FieldT (Types.Cons, (Types.ValStorageT (Types.NumT Types.I32T)))])))
 
 and lower_sum_type ctxt t : int =
   let anycon = lower_anycon_type ctxt in
   match t with  
-  | None -> emit_type ctxt (sub [Wasm.VarHT (Wasm.StatX anycon)] (Wasm.DefStructT (Wasm.StructT (field (Wasm.NumT Wasm.I32T) :: []))))
+  | None -> emit_type ctxt (sub [Types.VarHT (Types.StatX anycon)] (Types.DefStructT (Types.StructT (field (Types.NumT Types.I32T) :: []))))
   | Some x -> 
   let vt = lower_value_type ctxt field_rep x in
-  let ft = (fun x -> Wasm.FieldT (Wasm.Cons, Wasm.ValStorageT x)) vt in
-  emit_type ctxt (sub [Wasm.VarHT (Wasm.StatX anycon)] (Wasm.DefStructT (Wasm.StructT (field (Wasm.NumT Wasm.I32T) :: ft :: []))))
+  let ft = (fun x -> Types.FieldT (Types.Cons, Types.ValStorageT x)) vt in
+  emit_type ctxt (sub [Types.VarHT (Types.StatX anycon)] (Types.DefStructT (Types.StructT (field (Types.NumT Types.I32T) :: ft :: []))))
 
 and lower_inline_type ctxt t : int = 
   let anycon = lower_anycon_type ctxt in
   let vt = lower_value_type ctxt field_rep t in
-  let ft = (fun x -> Wasm.FieldT (Wasm.Cons, Wasm.ValStorageT x)) vt in
-  emit_type ctxt (sub [Wasm.VarHT (Wasm.StatX anycon)] (Wasm.DefStructT (Wasm.StructT (field (Wasm.NumT Wasm.I32T) :: ft :: []))))
+  let ft = (fun x -> Types.FieldT (Types.Cons, Types.ValStorageT x)) vt in
+  emit_type ctxt (sub [Types.VarHT (Types.StatX anycon)] (Types.DefStructT (Types.StructT (ft :: []))))
 
 
 
@@ -190,30 +190,30 @@ and lower_var_type ctxt t =
   in
   match t with
   | Ast.TyConst Const.FloatTy ->
-    emit_type ctxt (sub [] (Wasm.DefStructT (Wasm.StructT [field (Wasm.NumT Wasm.F64T)])))
+    emit_type ctxt (sub [] (Types.DefStructT (Types.StructT [field (Types.NumT Types.F64T)])))
   | Ast.TyTuple ts ->
     let ts = List.map (lower_value_type ctxt field_rep) ts in
-    emit_type ctxt (sub [] (Wasm.DefStructT  (Wasm.StructT (List.map field ts))))
+    emit_type ctxt (sub [] (Types.DefStructT  (Types.StructT (List.map field ts))))
   | Ast.TyArrow (_, _) as x -> 
     let num_args = arity x in
     snd (lower_func_type ctxt num_args)
   | _ -> assert false
 
 and lower_anyclos_type ctxt : int =
-  emit_type ctxt (sub [] (Wasm.DefStructT (Wasm.StructT [field (Wasm.NumT Wasm.I32T)])))
+  emit_type ctxt (sub [] (Types.DefStructT (Types.StructT [field (Types.NumT Types.I32T)])))
 
 and lower_func_type ctxt arity : int * int =
-  let func ts1 ts2 = Wasm.DefFuncT (Wasm.FuncT (ts1, ts2)) in
+  let func ts1 ts2 = Types.DefFuncT (Types.FuncT (ts1, ts2)) in
   let argts, _ = lower_param_types ctxt arity in
-  let key = (argts, [Wasm.RefT absref], []) in
+  let key = (argts, [Types.RefT absref], []) in
   match ClosMap.find_opt key !(ctxt.ext.clostypes) with
   | Some {codeidx; closidx; _} -> codeidx, closidx
   | None ->
     let anyclos = lower_anyclos_type ctxt in
     let code, def_code = emit_type_deferred ctxt in
-    let closdt = (sub [Wasm.VarHT (Wasm.StatX anyclos)] (Wasm.DefStructT (Wasm.StructT [field (Wasm.NumT Wasm.I32T); field (Wasm.RefT(Wasm.NoNull ,Wasm.VarHT (Wasm.StatX code)))]))) in
+    let closdt = (sub [Types.VarHT (Types.StatX anyclos)] (Types.DefStructT (Types.StructT [field (Types.NumT Types.I32T); field (Types.RefT(Types.NoNull ,Types.VarHT (Types.StatX code)))]))) in
     let clos = emit_type ctxt closdt in
-    let codedt = (sub [] (func ((Wasm.RefT (Wasm.NoNull, Wasm.VarHT (Wasm.StatX clos))) :: argts) [Wasm.RefT absref])) in
+    let codedt = (sub [] (func ((Types.RefT (Types.NoNull, Types.VarHT (Types.StatX clos))) :: argts) [Types.RefT absref])) in
     def_code codedt;
     let clos_idxs = {codeidx = code; closidx = clos; envidx = clos} in
     ctxt.ext.clostypes := ClosMap.add key clos_idxs !(ctxt.ext.clostypes);
@@ -221,38 +221,38 @@ and lower_func_type ctxt arity : int * int =
 
 and lower_clos_type ctxt arity flds : int * int * int =
   let argts, _ = lower_param_types ctxt arity in
-  let key = (argts, [Wasm.RefT absref], flds) in
+  let key = (argts, [Types.RefT absref], flds) in
   match ClosMap.find_opt key !(ctxt.ext.clostypes) with
   | Some {codeidx; closidx; envidx} -> codeidx, closidx, envidx
   | None ->
     let code, clos = lower_func_type ctxt arity in
     let envdt =
-      (sub [Wasm.VarHT (Wasm.StatX clos)] (Wasm.DefStructT (Wasm.StructT (field (Wasm.NumT Wasm.I32T) :: field (ref_ code) :: flds)))) in
+      (sub [Types.VarHT (Types.StatX clos)] (Types.DefStructT (Types.StructT (field (Types.NumT Types.I32T) :: field (ref_ code) :: flds)))) in
     let clos_env = emit_type ctxt envdt in
     let clos_idxs = {codeidx = code; closidx = clos; envidx = clos_env} in
     ctxt.ext.clostypes := ClosMap.add key clos_idxs !(ctxt.ext.clostypes);
     code, clos, clos_env
 
-and lower_param_types ctxt arity : Wasm.val_type list * int option =
-  let field_mut t = Wasm.FieldT (Wasm.Var , Wasm.ValStorageT t) in
-  let array ft = Wasm.DefArrayT (Wasm.ArrayT ft) in
+and lower_param_types ctxt arity : Types.val_type list * int option =
+  let field_mut t = Types.FieldT (Types.Var , Types.ValStorageT t) in
+  let array ft = Types.DefArrayT (Types.ArrayT ft) in
   if arity <= max_func_arity then
-    List.init arity (fun _ -> Wasm.RefT absref), None
+    List.init arity (fun _ -> Types.RefT absref), None
   else
-    let argv = emit_type ctxt (sub [] (array (field_mut (Wasm.RefT absref)))) in
+    let argv = emit_type ctxt (sub [] (array (field_mut (Types.RefT absref)))) in
     [ref_ argv], Some argv
 
-and lower_block_type ctxt rep t : Wasm.block_type =
+and lower_block_type ctxt rep t : Types.block_type =
   match t, rep with
   | _, DropRep
-  | Ast.TyTuple [], BlockRep _ -> Wasm.ValBlockType None 
+  | Ast.TyTuple [], BlockRep _ -> Types.ValBlockType None 
   | t, _ -> ValBlockType (Some (lower_value_type ctxt rep t))
 
 
 (* Closure environments *)
 
 let lower_clos_env ctxt vars rec_xs
-  : Wasm.field_type list * (Ast.variable * Ast.ty * int) list =
+  : Types.field_type list * (Ast.variable * Ast.ty * int) list =
   let fixups = ref [] in
   let flds =
     List.mapi (fun i (x, t) ->

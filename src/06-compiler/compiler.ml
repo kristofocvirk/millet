@@ -3,7 +3,10 @@ module Const = Language.Const
 module Ty = Typechecker
 module Lower = Lower
 module Env = Env
-open Wasm
+module Types = Wasm.Types
+module Arrange = Wasm.Arrange
+module Sexpr = Wasm.Sexpr
+module Wasm = Wasm.Ast 
 open Emit
 open Source
 
@@ -11,7 +14,7 @@ type pat_class = IrrelevantPat | TotalPat | PartialPat
 
 let max_func_arity = 12
 
-let ref_cast idx = Wasm.RefCast (Wasm.NoNull, Wasm.VarHT (Wasm.StatX idx))
+let ref_cast idx = Wasm.RefCast (Types.NoNull, Types.VarHT (Types.StatX idx))
 
   (* coerce *)
 
@@ -203,7 +206,7 @@ let rec compile_func_apply arity typeidx ctxt=
       let clos = emit_param ctxt in
       let args = List.map (fun _ -> emit_param ctxt ) argts in
       let arg0 = List.hd args in
-      let block bt es = Block (bt, es) in
+      let block bt es = Wasm.Block (bt, es) in
       emit_block ctxt block (ValBlockType None) (fun ctxt ->
         emit_block ctxt block (ValBlockType None)(fun ctxt ->
           let rec over_apply ctxt = function
@@ -295,8 +298,8 @@ let rec compile_func_apply arity typeidx ctxt=
 
 
 and compile_func_curry arity ctxt typeidx=
-  let block bt es = Block (bt, es) in
-  let loop bt es = Loop (bt, es) in
+  let block bt es = Wasm.Block (bt, es) in
+  let loop bt es = Wasm.Loop (bt, es) in
   let arity_string =
     if arity <= max_func_arity then string_of_int arity else "vec" in
   Emit.lookup_intrinsic ctxt ("func_curry" ^ arity_string) (fun def_fwd ->
@@ -458,18 +461,18 @@ let lower_text_type ctxt : int =
 
 
 let compile_text_eq ctxt : int =
-  let block bt es = Block (bt, es) in
-  let loop bt es = Loop (bt, es) in
-  let if_ bt es1 es2 = If (bt, es1, es2) in
+  let block bt es = Wasm.Block (bt, es) in
+  let loop bt es = Wasm.Loop (bt, es) in
+  let if_ bt es1 es2 = Wasm.If (bt, es1, es2) in
   Emit.lookup_intrinsic ctxt "text_eq" (fun _ ->
     let text = lower_text_type ctxt in
-    let textref = (RefT (NoNull, VarHT (StatX text))) in
+    let textref = (Types.RefT (NoNull, VarHT (StatX text))) in
     emit_func ctxt [textref; textref] [NumT I32T] (fun ctxt _ ->
       let arg1 = emit_param ctxt in
       let arg2 = emit_param ctxt in
       let len = emit_local ctxt {ltype = NumT I32T} in
       List.iter (emit_instr ctxt ) [
-        block (ValBlockType None) (List.map (fun e -> e) [
+        block (ValBlockType None) (List.map (fun e -> e) Wasm.[
           LocalGet (arg1);
           LocalGet (arg2);
           RefEq;
@@ -575,8 +578,8 @@ let compile_val_var_bind ctxt x t src funcloc_opt =
 (* closures *)
 
 let local_ref_ty idx = 
-  let x = (RefT (NoNull, VarHT (StatX idx))) in 
-  {ltype = x}
+  let x = (Types.RefT (NoNull, VarHT (StatX idx))) in 
+  Wasm.{ltype = x}
 
 let compile_load_env ctxt clos (closNenv : int) vars envflds=
   if vars <> Ast.VariableMap.empty then begin
@@ -596,7 +599,7 @@ let compile_load_env ctxt clos (closNenv : int) vars envflds=
         let null =
           if func_loc_opt = None then Lower.Nonull else
           match List.nth envflds i with
-          | (FieldT (_ ,ValStorageT (RefT (Null, _)))) -> Null
+          | (Types.FieldT (_ ,ValStorageT (RefT (Null, _)))) -> Null
           | _ -> Nonull
         in
         env := Env.extend_val !env x
@@ -653,7 +656,7 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
   | Ast.PTuple ps -> 
     let typ, _, _ = Ty.infer_pattern state pat in 
     let typeidx = Lower.lower_var_type ctxt typ in
-    let tmp = emit_local ctxt {ltype = RefT (Wasm.Null, VarHT (StatX typeidx))} in
+    let tmp = emit_local ctxt {ltype = RefT (Types.Null, VarHT (StatX typeidx))} in
     compile_coerce ctxt (Lower.pat_rep ()) Lower.rigid_rep typ; 
     emit ctxt [
       LocalSet (tmp);
@@ -675,7 +678,7 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
     (let _, env = Lower.current_scope ctxt in
     match (Env.find_lbl lbl !env).it with 
     | {tag = i; typeidx = t} -> 
-      let tmp = emit_local ctxt {ltype = RefT (Wasm.Null, VarHT (StatX t))} in
+      let tmp = emit_local ctxt {ltype = RefT (Types.Null, VarHT (StatX t))} in
       emit ctxt [
         LocalGet tmp;
         StructGet (t, 0, None);
@@ -829,7 +832,7 @@ and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower
               | PartialPat -> assert false
             ) ps
           else
-            let block bt es = Block (bt, es) in
+            let block bt es = Wasm.Block (bt, es) in
             emit_block ctxt block (ValBlockType None)(fun ctxt ->
               emit_block ctxt block (ValBlockType None) (fun ctxt ->
                 List.iteri (fun i pI ->
@@ -857,7 +860,7 @@ and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower
       let fixup ctxt self =
         if fixups <> [] then begin
           let tmp = emit_local ctxt ({ltype = RefT (Null, VarHT (StatX closNenv))}) in
-          let rttidx = (NoNull, VarHT (StatX closNenv)) in
+          let rttidx = (Types.NoNull, Types.VarHT (StatX closNenv)) in
           compile_val_var ctxt self ty Lower.ref_rep;
           emit ctxt [
             (*ref_as_data;*) 
@@ -878,7 +881,7 @@ and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower
 
 let rec compile_computation ctxt state comp dst = 
   let emit ctxt = List.iter (emit_instr ctxt) in
-  let block bt es = Block (bt, es) in
+  let block bt es = Wasm.Block (bt, es) in
   match comp with
   | Ast.Return exp -> compile_expression ctxt state exp Lower.rigid_rep 
   | Ast.Do (compute, (pat, cont)) -> 
@@ -907,7 +910,7 @@ let rec compile_computation ctxt state comp dst =
     let t1, _ = Ty.infer_expression state exp in
     let ty, _ = Ty.infer_computation state comp in
     let tmp = emit_local ctxt ({ltype = Lower.lower_value_type ctxt (Lower.tmp_rep ()) t1}) in
-    let block bt es = Block (bt, es) in
+    let block bt es = Wasm.Block (bt, es) in
     ignore (compile_expression ctxt state exp (Lower.tmp_rep ()));
     emit ctxt [
       LocalSet (tmp);
@@ -1000,7 +1003,7 @@ let compile_ty_defs ctxt ty_defs =
       match ty with 
       | Ast.TyInline t -> 
         let tyidx = Lower.lower_inline_type ctxt t in 
-         env := Env.extend_typ !env name ((@@) Lower.([(None, {tag = -1; typeidx = tyidx})]))
+          env := Env.extend_typ !env name ((@@) Lower.([(None, {tag = -1; typeidx = tyidx})]))
       | Ast.TySum t_ls -> 
         let x = (List.mapi (fun i (lbl, ty_opt) -> 
           let tyidx = (Lower.lower_sum_type ctxt ty_opt) in 
@@ -1047,7 +1050,7 @@ let rec compile_commands ctxt state ds dst =
     compile_command ctxt state d DropRep;
     compile_commands ctxt state ds' dst
 
-let compile_prog cmds state : Wasm.module_ =
+let compile_prog cmds state : unit =
   let ctxt = Lower.enter_scope (Lower.make_ctxt ()) GlobalScope in
   (* Compile declarations directly *)
   compile_commands ctxt state cmds (Lower.global_rep ());
@@ -1062,3 +1065,6 @@ let compile_prog cmds state : Wasm.module_ =
   ) !env;
   (* Generate the WebAssembly module *)
   Emit.gen_module ctxt
+  |> Arrange.module_
+  |> Sexpr.to_string 64
+  |> print_endline

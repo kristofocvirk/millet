@@ -1,5 +1,6 @@
-open Wasm
-open Source
+module Wasm = Wasm.Ast
+open Wasm.Types
+module Source = Wasm.Source
 module Ast = Language.Ast
 open Utils.Utf8
 
@@ -46,15 +47,15 @@ module Refs = Set.Make(Int)
 module Intrinsics = Map.Make(String)
 
 type internal =
-  { types : (sub_type, Ast.ty) phrase entities;
-    globals : global entities;
-    funcs : func entities;
-    memories : memory entities;
-    datas : data_segment entities;
-    imports : import entities;
-    exports : export entities;
-    locals : local entities;
-    instrs : instr entities;
+  { types : (sub_type, Ast.ty) Source.phrase entities;
+    globals : Wasm.global entities;
+    funcs : Wasm.func entities;
+    memories : Wasm.memory entities;
+    datas : Wasm.data_segment entities;
+    imports : Wasm.import entities;
+    exports : Wasm.export entities;
+    locals : Wasm.local entities;
+    instrs : Wasm.instr entities;
     refs : Refs.t ref;
     data_offset : int ref;
     start : int option ref;
@@ -138,7 +139,7 @@ let emit_type ctxt dt : int =
   match DefTypes.find_opt dt !(ctxt.int.deftypes) with
   | Some idx -> idx
   | None ->
-    let idx = emit_entity ctxt.int.types ((@@) dt) in
+    let idx = emit_entity ctxt.int.types Source.((@@) dt) in
     ctxt.int.deftypes := DefTypes.add dt idx !(ctxt.int.deftypes);
     idx
 
@@ -146,7 +147,7 @@ let emit_type_deferred ctxt : int * (sub_type -> unit) =
   let idx, r = alloc_entity ctxt.int.types in
   idx, fun dt ->
     ctxt.int.deftypes := DefTypes.add dt idx !(ctxt.int.deftypes);
-    define_entity r ((@@) dt)
+    define_entity r Source.((@@) dt)
 
 let emit_import ctxt mname name desc =
   let module_name = decode mname in
@@ -186,7 +187,7 @@ let emit_global ctxt mut t' ginit_opt : int =
     | Some ginit -> ginit
     | None ->
       match t' with
-      | (NumT I32T) -> [IntConst (I32T, 0)]
+      | (NumT I32T) -> [Wasm.IntConst (I32T, 0)]
       | (NumT I64T) -> [IntConst (I64T, 0)]
       | (NumT F32T) -> [FloatConst (F32T, 0.0)] 
       | (NumT F64T) -> [FloatConst (F64T, 0.0)] 
@@ -203,16 +204,16 @@ let emit_memory ctxt min max : int =
   idx
 
 let emit_passive_data ctxt s : int =
-  let dmode = Passive in
-  let seg = {dinit = s; dmode} in
+  let dmode = Wasm.Passive in
+  let seg = Wasm.{dinit = s; dmode} in
   emit_entity ctxt.int.datas seg
 
 let emit_active_data ctxt s : int =
   assert (get_entities ctxt.int.memories = []);
   let addr = !(ctxt.int.data_offset) in
-  let offset = [IntConst (I32T, addr) ] in
-  let dmode = Active {index = 0; offset} in
-  let seg = {dinit = s; dmode}in
+  let offset = [Wasm.IntConst (I32T, addr) ] in
+  let dmode = Wasm.Active {index = 0; offset} in
+  let seg = Wasm.{dinit = s; dmode} in
   ignore (emit_entity ctxt.int.datas seg);
   ctxt.int.data_offset := addr + (String.length s);
   addr
@@ -263,9 +264,9 @@ let recify sts =
   List.map (fun scc ->
     match Scc.IntSet.elements scc with
     | [x] ->
-      Wasm.RecT [sta.(x).it] 
+      RecT [sta.(x).it] 
     | xs ->
-      Wasm.RecT (List.map (fun x -> sta.(x).it) xs)
+      RecT (List.map (fun x -> sta.(x).it) xs)
   ) (List.sort Scc.IntSet.compare sccs)
 
 
@@ -295,5 +296,5 @@ let gen_module ctxt : Wasm.module_ =
       if get_entities ctxt.int.datas = []
       || ctxt.int.memories.cnt > 0 then memories else
       let sz = (!(ctxt.int.data_offset) + (0xffff)) / 0x10000 in
-      [{Wasm.mtype = Wasm.(MemoryT {min = sz; max = Some sz})}]
+      [{Wasm.mtype = (MemoryT {min = sz; max = Some sz})}]
   }
