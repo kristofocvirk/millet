@@ -139,7 +139,7 @@ let emit_type ctxt dt : int =
   match DefTypes.find_opt dt !(ctxt.int.deftypes) with
   | Some idx -> idx
   | None ->
-    let idx = emit_entity ctxt.int.types Source.((@@) dt) in
+    let idx = emit_entity ctxt.int.types Source.(make_phrase dt) in
     ctxt.int.deftypes := DefTypes.add dt idx !(ctxt.int.deftypes);
     idx
 
@@ -147,7 +147,7 @@ let emit_type_deferred ctxt : int * (sub_type -> unit) =
   let idx, r = alloc_entity ctxt.int.types in
   idx, fun dt ->
     ctxt.int.deftypes := DefTypes.add dt idx !(ctxt.int.deftypes);
-    define_entity r Source.((@@) dt)
+    define_entity r Source.(make_phrase dt)
 
 let emit_import ctxt mname name desc =
   let module_name = decode mname in

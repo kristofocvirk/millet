@@ -1,5 +1,6 @@
-module Ast = Language.Ast
 module Const = Language.Const
+module Typed = Typechecker.TypedAst
+module Ast = Language.Ast
 module Ty = Typechecker
 module Lower = Lower
 module Env = Env
@@ -113,14 +114,7 @@ let rec compile_coerce ctxt src dst t =
     )
   | DropRep, _ -> assert false
 
-let rec find_var f ctxt x envs =
-  match envs with
-  | [] ->
-    assert false
-  | (_, env)::envs' ->
-    match f x !env with
-    | Some {it = locs; _} -> locs
-    | None -> find_var f ctxt x envs'
+
 
 (* helpers *)
 let compile_load_arg ctxt i arg argv_opt =
@@ -140,8 +134,16 @@ let compile_load_arg ctxt i arg argv_opt =
       RefAsNonNull;
     ]
 
-let find_val_var = find_var Env.find_opt_val 
+let rec find_var f ctxt x envs =
+  match envs with
+  | [] ->
+    assert false
+  | (_, env)::envs' ->
+    match f x !env with
+    | Some {it = locs; _} -> locs
+    | None -> find_var f ctxt x envs'
 
+let find_val_var = find_var Env.find_opt_val 
 
 let filter_loc (ctxt : Lower.ctxt) find_var vals =
   Ast.VariableMap.filter (fun x _ ->
@@ -183,6 +185,76 @@ let compile_push_args ctxt n shift compile_eI =
         ArraySet (argv);
       ]
     done
+
+(* Constants *)
+let lower_text_type ctxt : int =
+  emit_type ctxt (SubT (NoFinal, [], (DefArrayT (ArrayT (FieldT (Var, PackStorageT Pack8))))))
+
+let compile_text_new ctxt : int =
+  let i32_load8_u align offset =
+    Wasm.Load {ty = I32T; align; offset; pack = Some (Pack8, ZX)} in
+  let block bt es = Wasm.Block (bt, es) in
+  let loop bt es = Wasm.Loop (bt, es) in
+  Emit.lookup_intrinsic ctxt "text_new" (fun _ ->
+    let text = lower_text_type ctxt in
+    let textref = (Types.RefT (NoNull, VarHT (StatX text))) in
+    let textnullref = Wasm.{ltype = (Types.RefT (Null, VarHT (StatX text)))} in 
+    emit_func ctxt [NumT I32T; NumT I32T] [textref] (fun ctxt _ ->
+      let src = emit_param ctxt in
+      let len = emit_param ctxt in
+      let dst = emit_local ctxt textnullref in
+      List.iter (emit_instr ctxt) [
+        LocalGet (len);
+        ArrayNew (text, Implicit);
+        LocalSet (dst);
+        block (Types.ValBlockType None) (List.map (fun e -> e) Wasm.[
+          loop (Types.ValBlockType None) (List.map (fun e -> e) [
+            LocalGet (len);
+            Eqz I32T;
+            BrIf (1);
+            LocalGet (dst);
+            LocalGet (len);
+            IntConst (I32T, 1);
+            Sub I32T;
+            LocalTee (len);
+            LocalGet (len);
+            LocalGet (src);
+            Add I32T;
+            i32_load8_u 0 0;
+            ArraySet (text);
+            Br (0);
+          ])
+        ]);
+        LocalGet (dst);
+        RefAsNonNull;
+      ]
+    )
+  )
+
+let compile_lit ctxt l =
+  let emit ctxt = List.iter (emit_instr ctxt) in
+  match l with
+  | Const.Boolean b ->
+    emit ctxt [
+      IntConst (I32T, (if b then 1 else 0));
+    ]
+  | Integer i ->
+    emit ctxt Wasm.[
+      IntConst (I32T, i);
+    ]
+  | Float z ->
+    emit ctxt Wasm.[
+      FloatConst (F64T, z);
+    ]
+  | String s ->
+    let addr = emit_active_data ctxt s in
+    emit ctxt [
+      IntConst (I32T, addr);
+    ];
+    emit ctxt [
+      IntConst (I32T, (String.length s));
+      Call (compile_text_new ctxt);
+    ]
 
 let compile_load_args ctxt i j shift arg0 src_argv_opt =
   assert (j <= max_func_arity || src_argv_opt <> None);
@@ -559,7 +631,7 @@ let compile_val_var ctxt x t dst =
     | LocalScope -> Lower.LocalLoc (emit_local ctxt ({ltype = vt}))
     | GlobalScope -> Lower.GlobalLoc (emit_global ctxt Var vt None)
   in
-  env := Env.extend_val !env x ((@@) (loc, funcloc_opt))
+  env := Env.extend_val !env x (make_phrase (loc, funcloc_opt))
 
 let compile_val_var_bind_post ctxt x t src =
   let _, env = Lower.current_scope ctxt in
@@ -603,7 +675,7 @@ let compile_load_env ctxt clos (closNenv : int) vars envflds=
           | _ -> Nonull
         in
         env := Env.extend_val !env x
-          ((@@) (Lower.ClosureLoc (null, idx, envlocal, closNenv), func_loc_opt)); 
+          (make_phrase (Lower.ClosureLoc (null, idx, envlocal, closNenv), func_loc_opt)); 
         i + 1
       ) vars 0 
     in ()
@@ -630,39 +702,36 @@ let compile_alloc_clos ctxt fn arity vars rec_xs closNenv=
 
   (* patterns *)
 
-let rec classify_pat = function
-    | Ast.PVar _ -> TotalPat 
-    | Ast.PAnnotated (p1, _) -> classify_pat p1
-    | Ast.PAs (p1, _) -> classify_pat p1
-    | Ast.PTuple ps -> List.fold_left max IrrelevantPat (List.map classify_pat ps)
-    | Ast.PVariant (_, None) -> PartialPat
-    | Ast.PVariant (_, Some p1) -> classify_pat p1
-    | Ast.PConst _ -> PartialPat 
-    | Ast.PNonbinding -> IrrelevantPat 
+let rec classify_pat p = 
+    match p.it with
+    | Typed.PVar _ -> TotalPat 
+    | Typed.PAnnotated (p1, _) -> classify_pat p1
+    | Typed.PAs (p1, _) -> classify_pat p1
+    | Typed.PTuple ps -> List.fold_left max IrrelevantPat (List.map classify_pat ps)
+    | Typed.PVariant (_, None) -> PartialPat
+    | Typed.PVariant (_, Some p1) -> classify_pat p1
+    | Typed.PConst _ -> PartialPat 
+    | Typed.PNonbinding -> IrrelevantPat 
 
-let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt= 
+let rec compile_pattern ctxt (fail : int) (pat : Typed.pattern) funcloc_opt= 
   let emit ctxt = List.iter (emit_instr ctxt) in
-  match pat with
-  | Ast.PNonbinding | Ast.PTuple [] -> 
+  match pat.it with
+  | Typed.PNonbinding | Typed.PTuple [] -> 
     compile_coerce ctxt (Lower.pat_rep ()) DropRep (Ast.TyParam (Ast.TyParam.fresh ""))
-  | Ast.PVar var -> 
-    let t, _, _ = Ty.infer_pattern state pat in
-    compile_val_var_bind ctxt var t (Lower.pat_rep ()) funcloc_opt 
-  | Ast.PAnnotated (p, _) -> compile_pattern ctxt state fail p funcloc_opt
-  | Ast.PAs (p, var) -> 
-    let t, _, _ = Ty.infer_pattern state pat in
-    compile_pattern ctxt state fail p funcloc_opt;
-    compile_val_var_bind ctxt var t (Lower.pat_rep ()) funcloc_opt
-  | Ast.PTuple ps -> 
-    let typ, _, _ = Ty.infer_pattern state pat in 
-    let typeidx = Lower.lower_var_type ctxt typ in
+  | Typed.PVar var -> 
+    compile_val_var_bind ctxt var (et pat) (Lower.pat_rep ()) funcloc_opt 
+  | Typed.PAnnotated (p, _) -> compile_pattern ctxt fail p funcloc_opt
+  | Typed.PAs (p, var) -> 
+    compile_pattern ctxt fail p funcloc_opt;
+    compile_val_var_bind ctxt var (et p) (Lower.pat_rep ()) funcloc_opt
+  | Typed.PTuple ps -> 
+    let typeidx = Lower.lower_var_type ctxt (et pat) in
     let tmp = emit_local ctxt {ltype = RefT (Types.Null, VarHT (StatX typeidx))} in
-    compile_coerce ctxt (Lower.pat_rep ()) Lower.rigid_rep typ; 
+    compile_coerce ctxt (Lower.pat_rep ()) Lower.rigid_rep (et pat); 
     emit ctxt [
       LocalSet (tmp);
     ];
     List.iteri (fun i pI ->
-      let pat_ty, _, _ = Ty.infer_pattern state pI in
       if classify_pat pI > IrrelevantPat then begin
         emit ctxt [
           LocalGet tmp;
@@ -670,13 +739,12 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
         emit ctxt [
           StructGet (typeidx, i, None);
         ];
-        compile_coerce ctxt Lower.field_rep (Lower.pat_rep ()) pat_ty;
-        compile_pattern ctxt state fail pI funcloc_opt;
+        compile_coerce ctxt Lower.field_rep (Lower.pat_rep ()) (et pI);
+        compile_pattern ctxt fail pI funcloc_opt;
       end
     ) ps
-  | Ast.PVariant (lbl, pat) -> 
-    (let _, env = Lower.current_scope ctxt in
-    match (Env.find_lbl lbl !env).it with 
+  | Typed.PVariant (lbl, pat) -> 
+    (match (Lower.find_lbl lbl ctxt) with 
     | {tag = i; typeidx = t} -> 
       let tmp = emit_local ctxt {ltype = RefT (Types.Null, VarHT (StatX t))} in
       emit ctxt [
@@ -688,20 +756,19 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
       match pat with 
       | None -> ()
       | Some x -> 
-        (let pat_ty, _, _ = Ty.infer_pattern state x in
+        (
           emit ctxt [
             LocalGet tmp;
             StructGet (t, 1, None);
           ];
-          compile_coerce ctxt Lower.field_rep (Lower.pat_rep ()) pat_ty;
-          compile_pattern ctxt state fail x funcloc_opt;
+          compile_coerce ctxt Lower.field_rep (Lower.pat_rep ()) (et x);
+          compile_pattern ctxt fail x funcloc_opt;
         )
     )
-  | Ast.PConst const as c -> 
-    let typ, _, _ = Ty.infer_pattern state c in 
-    compile_coerce ctxt (Lower.pat_rep ()) Lower.rigid_rep typ;
-    ignore (compile_expression ctxt state (Ast.Const const) Lower.rigid_rep); 
-    (match typ with 
+  | Typed.PConst const -> 
+    compile_coerce ctxt (Lower.pat_rep ()) Lower.rigid_rep (et pat);
+    compile_lit ctxt const; 
+    (match et pat with 
     | Ast.TyConst (IntegerTy) | Ast.TyConst (BooleanTy) -> 
       emit ctxt [Wasm.Ne I32T]
     | Ast.TyConst (FloatTy) -> 
@@ -715,95 +782,77 @@ let rec compile_pattern ctxt (state : Ty.state)  (fail : int) pat funcloc_opt=
     ]
 
     (* expressions *)
-and compile_expression (ctxt : 'a ctxt) (state : Ty.state) exp dst : Lower.func_loc option= 
+and compile_expression (ctxt : 'a ctxt) (exp : Typed.expression) dst : Lower.func_loc option= 
   let emit ctxt = List.iter (emit_instr ctxt) in 
-  match exp with
-  | Ast.Var var -> 
-    let ty, _ = Ty.infer_expression state exp in  
-    compile_val_var ctxt var ty dst;
+  let t = et exp in
+  match it exp with
+  | Typed.Var var -> 
+    compile_val_var ctxt var t dst;
     let _, func_loc_opt = find_val_var ctxt var ctxt.ext.envs in
     func_loc_opt
-  | Ast.Const (Const.Integer i) -> 
-    let ty, _ = Ty.infer_expression state exp in
-    emit ctxt [IntConst (I32T, i)]; 
-    compile_coerce ctxt Lower.rigid_rep dst ty;
-    None 
-  | Ast.Const (Const.String s) -> 
-    let ty, _ = Ty.infer_expression state exp in
-    let addr = emit_active_data ctxt s in
-      emit ctxt [
-        IntConst (I32T, addr);
-      ]; 
-    compile_coerce ctxt Lower.rigid_rep dst ty;
-    None
-  | Ast.Const (Const.Boolean b) -> 
-    let ty, _ = Ty.infer_expression state exp in
-    (match b with 
-    | true ->  emit ctxt [IntConst (I32T, 1)] 
-    | false -> emit ctxt [IntConst (I32T, 0)]);
-    compile_coerce ctxt Lower.rigid_rep dst ty;
-    None
-  | Ast.Const (Const.Float f) -> 
-    let ty, _ = Ty.infer_expression state exp in
-    emit ctxt [FloatConst (F64T, f)]; 
-    compile_coerce ctxt Lower.rigid_rep dst ty;
-    None
-  | Ast.Annotated (exp1, _) -> compile_expression ctxt state exp1 dst
-  | Ast.Tuple [] -> compile_coerce ctxt Lower.unit_rep dst (Ast.TyTuple []); None
-  | Ast.Tuple es -> 
-    let ty, _ = Ty.infer_expression state exp in  
-    let typ = Lower.lower_var_type ctxt ty in 
-    List.iter (fun e -> ignore (compile_expression ctxt state e Lower.field_rep)) es;
+  | Const c -> 
+    compile_lit ctxt c; None
+  | Annotated (exp1, _) -> compile_expression ctxt exp1 dst
+  | Tuple [] -> compile_coerce ctxt Lower.unit_rep dst (Ast.TyTuple []); None
+  | Tuple es -> 
+    let typ = Lower.lower_var_type ctxt t in 
+    List.iter (fun e -> ignore (compile_expression ctxt e Lower.field_rep)) es;
     emit ctxt [
       StructNew (typ, Explicit)
     ];
-    compile_coerce ctxt Lower.rigid_rep dst ty;
+    compile_coerce ctxt Lower.rigid_rep dst t;
     None
-  | Ast.Variant (lbl, e) -> 
-    let ty, _ = Ty.infer_expression state exp in
-    let _, env = Lower.current_scope ctxt in
-    let data = (Env.find_lbl lbl !env).it in
+  | Variant (lbl, e) -> 
+    let data = (Lower.find_lbl lbl ctxt) in
     emit ctxt [
       IntConst (I32T, data.tag);
     ];
     (match e with 
     | None -> ()
     | Some x -> 
-      ignore (compile_expression ctxt state x (Lower.field_rep));
+      ignore (compile_expression ctxt x (Lower.field_rep));
     );
     emit ctxt [
       StructNew (data.typeidx, Explicit);
     ];
-    compile_coerce ctxt Lower.rigid_rep dst ty;
+    compile_coerce ctxt Lower.rigid_rep dst (et exp);
     None
-  | Ast.Lambda _ -> Some (compile_func ctxt state exp)
-  | Ast.RecLambda (var, abs) -> Some (compile_func_rec ctxt state (Ast.Lambda abs) var)
+  | Lambda _ -> 
+    Some (compile_func ctxt exp)
+  | RecLambda (var, abs) -> Some (compile_func_rec ctxt (Typed.make_expression (Typed.Lambda abs) (et abs)) var t) 
 
     (* functions *)
 
-and compile_func ctxt state e : Lower.func_loc =
-  let func_loc, def, _fixup = compile_func_staged ctxt state Ast.VariableMap.empty e in
+and compile_func ctxt e : Lower.func_loc =
+  let func_loc, def, _fixup = compile_func_staged ctxt Ast.VariableMap.empty e in
   def ctxt;
   func_loc
 
-and compile_func_rec ctxt (state : Ty.state) e rec_var : Lower.func_loc = 
-  let _, ty = Ast.VariableMap.find rec_var state.variables in 
-  let recs = Ast.VariableMap.add rec_var ty Ast.VariableMap.empty in
-  let func_loc, def, _fixup = compile_func_staged ctxt state recs e in
+and compile_func_rec ctxt (e : Typed.expression) rec_var f_ty: Lower.func_loc = 
+  match f_ty with 
+  | Ast.TyArrow (ty_from, _) ->
+  let recs = Ast.VariableMap.add rec_var ty_from Ast.VariableMap.empty in
+  let func_loc, def, _fixup = compile_func_staged ctxt recs e in
   def ctxt;
   func_loc
+  | _ -> failwith "this function only accepts reclambdas"
 
-and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower.func_loc * _ * _ =
+and compile_func_staged ctxt (rec_xs : Ast.ty Ast.VariableMap.t) (f : Typed.expression) : Lower.func_loc * _ * _ =
+  let remove_keys_of_second_map map1 map2 =
+    Ast.VariableMap.filter (fun key _ -> not (Ast.VariableMap.mem key map2)) map1 in
   let emit ctxt = List.iter (emit_instr ctxt) in
-  let temporary = Ty.free_exp state f in
-  let vars = filter_vars ctxt temporary in
-  let ty, _ = Ty.infer_expression state f in
-  let rec flat ps (e : Ast.expression) recs =
-    match e with
-    | Ast.Lambda (p, Ast.Return x) -> flat (p::ps) x recs
-    | Ast.RecLambda (var, (p, Ast.Return x)) ->
-      let _, ty = Ast.VariableMap.find var state.variables in
-      flat (p :: ps) x (Ast.VariableMap.add var ty recs)
+  let temporary = Typed.free_exp f in
+  let t = remove_keys_of_second_map temporary rec_xs in 
+  let vars = filter_vars ctxt t in
+  let t = et f in
+  let rec flat ps (e : Typed.expression) recs =
+    match it e with
+    | Typed.Lambda {it = (p, {it = Return x; _}); _} -> flat (p::ps) x recs
+    | RecLambda (var, {it = (p, {it = Return x; _}); _}) ->
+      (match et e with 
+      | Ast.TyArrow (from_ty, _) ->
+      flat (p :: ps) x (Ast.VariableMap.add var from_ty recs)
+      | _ -> failwith "it has to be TyArrow")
     | _ ->
       let fn, def_func = emit_func_deferred ctxt in
       let envflds, fixups = Lower.lower_clos_env ctxt vars rec_xs in
@@ -822,37 +871,39 @@ and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower
           let partial = List.exists (fun p -> classify_pat p = PartialPat) ps in
           if not partial then
             List.iteri (fun i pI ->
-              let ty, _, _ = Ty.infer_pattern state pI in
               match classify_pat pI with
-              | IrrelevantPat -> ()
+              | IrrelevantPat ->
+                ignore (compile_expression ctxt e Lower.arg_rep)
               | TotalPat ->
                 compile_load_arg ctxt i arg0 argv_opt;
-                compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
-                compile_pattern ctxt state (-1) pI None
+                compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (et pI);
+                compile_pattern ctxt (-1) pI None;
+                ignore (compile_expression ctxt e Lower.arg_rep)
               | PartialPat -> assert false
             ) ps
           else
             let block bt es = Wasm.Block (bt, es) in
-            emit_block ctxt block (ValBlockType None)(fun ctxt ->
+            emit_block ctxt block (ValBlockType None) (fun ctxt ->
               emit_block ctxt block (ValBlockType None) (fun ctxt ->
                 List.iteri (fun i pI ->
-                  let ty, _, _ = Ty.infer_pattern state pI in
                   match classify_pat pI with
-                  | IrrelevantPat -> ()
+                  | IrrelevantPat -> 
+                    ignore (compile_expression ctxt e Lower.arg_rep)
                   | TotalPat ->
                     compile_load_arg ctxt i arg0 argv_opt;
-                    compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
-                    compile_pattern ctxt state (-1) pI None
+                    compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (et pI);
+                    compile_pattern ctxt (-1) pI None;
+                    ignore (compile_expression ctxt e Lower.arg_rep);
                   | PartialPat ->
                     compile_load_arg ctxt i arg0 argv_opt;
-                    compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (ty);
-                    compile_pattern ctxt state 0 pI None;
+                    compile_coerce ctxt Lower.arg_rep (Lower.pat_rep ()) (et pI);
+                    compile_pattern ctxt 0 pI None;
+                    ignore (compile_expression ctxt e Lower.arg_rep);
                 ) ps;
                 emit ctxt [Br (1)];
               );
               emit ctxt [Unreachable]
             );
-          ignore (compile_expression ctxt state e Lower.arg_rep)
         );
         compile_alloc_clos
           ctxt fn (List.length ps) vars rec_xs closNenv
@@ -861,7 +912,7 @@ and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower
         if fixups <> [] then begin
           let tmp = emit_local ctxt ({ltype = RefT (Null, VarHT (StatX closNenv))}) in
           let rttidx = (Types.NoNull, Types.VarHT (StatX closNenv)) in
-          compile_val_var ctxt self ty Lower.ref_rep;
+          compile_val_var ctxt self t Lower.ref_rep;
           emit ctxt [
             (*ref_as_data;*) 
             RefCast (rttidx);
@@ -879,58 +930,60 @@ and compile_func_staged ctxt state (rec_xs : Ast.ty Ast.VariableMap.t) f : Lower
       Lower.{funcidx = fn; typeidx = closN; arity = List.length ps}, def, fixup
   in flat [] f rec_xs
 
-let rec compile_computation ctxt state comp dst = 
+
+
+let rec compile_computation ctxt comp dst = 
   let emit ctxt = List.iter (emit_instr ctxt) in
   let block bt es = Wasm.Block (bt, es) in
-  match comp with
-  | Ast.Return exp -> compile_expression ctxt state exp Lower.rigid_rep 
-  | Ast.Do (compute, (pat, cont)) -> 
+  match it comp with
+  | Typed.Return exp -> compile_expression ctxt exp Lower.rigid_rep 
+  | Do (compute, {it = (pat, cont); _}) -> 
     (match classify_pat pat with
     | IrrelevantPat ->
-      ignore (compile_computation ctxt state compute Lower.DropRep;)
+      ignore (compile_computation ctxt compute Lower.DropRep;)
     | TotalPat ->
-      let funcloc_opt = compile_computation ctxt state compute (Lower.pat_rep ()) in
-      compile_pattern ctxt state (-1) pat funcloc_opt;
+      let funcloc_opt = compile_computation ctxt compute (Lower.pat_rep ()) in
+      compile_pattern ctxt (-1) pat funcloc_opt;
     | PartialPat ->
       emit_block ctxt block (ValBlockType None)(fun ctxt ->
         emit_block ctxt block (ValBlockType None) (fun ctxt ->
-          let funcloc_opt = compile_computation ctxt state compute (Lower.pat_rep ()) in
-          compile_pattern ctxt state 0 pat funcloc_opt;
+          let funcloc_opt = compile_computation ctxt compute (Lower.pat_rep ()) in
+          compile_pattern ctxt 0 pat funcloc_opt;
           emit ctxt [Br (1)];
         );
         emit ctxt [Unreachable]
       ) 
     );
-    compile_computation ctxt state cont (Lower.rigid_rep)
-  | Ast.Match (exp, []) -> 
-    ignore (compile_expression ctxt state exp (Lower.pat_rep ()));
+    compile_computation ctxt cont (Lower.rigid_rep)
+  | Match (exp, []) -> 
+    ignore (compile_expression ctxt exp (Lower.pat_rep ()));
     emit ctxt [Unreachable;];
     None
-  | Ast.Match (exp, abs_ls) -> 
-    let t1, _ = Ty.infer_expression state exp in
-    let ty, _ = Ty.infer_computation state comp in
+  | Match (exp, abs_ls) -> 
+    let t1 = et exp in
+    let ty = et comp in
     let tmp = emit_local ctxt ({ltype = Lower.lower_value_type ctxt (Lower.tmp_rep ()) t1}) in
     let block bt es = Wasm.Block (bt, es) in
-    ignore (compile_expression ctxt state exp (Lower.tmp_rep ()));
+    ignore (compile_expression ctxt exp (Lower.tmp_rep ()));
     emit ctxt [
       LocalSet (tmp);
     ];
     let bt = Lower.lower_block_type ctxt dst ty in
     emit_block ctxt block bt (fun ctxt ->
       let ends_with_partial =
-        List.fold_left (fun _ (pI, cI) ->
+        List.fold_left (fun _ {it = (pI, cI); _} ->
           match classify_pat pI with
           | IrrelevantPat ->
-            ignore (compile_computation ctxt state cI dst);
+            ignore (compile_computation ctxt cI dst);
             emit ctxt [Br 0];
             false
           | TotalPat ->
             let ctxt = Lower.enter_scope ctxt LocalScope in
-            let typ, _, _ = Ty.infer_pattern state pI in
+            let typ = et pI in
             emit ctxt [LocalGet (tmp)];
             compile_coerce ctxt (Lower.tmp_rep ()) (Lower.pat_rep ()) typ;
-            compile_pattern ctxt state (-1) pI None;
-            ignore (compile_computation ctxt state cI dst);
+            compile_pattern ctxt (-1) pI None;
+            ignore (compile_computation ctxt cI dst);
             emit ctxt [Br 0];
             false
           | PartialPat ->
@@ -938,8 +991,8 @@ let rec compile_computation ctxt state comp dst =
             emit_block ctxt block (ValBlockType None)(fun ctxt ->
               emit ctxt [LocalGet tmp];
               compile_coerce ctxt (Lower.tmp_rep ()) (Lower.pat_rep ()) t1;
-              compile_pattern ctxt state 0 pI None;
-              ignore (compile_computation ctxt state cI dst);
+              compile_pattern ctxt 0 pI None;
+              ignore (compile_computation ctxt cI dst);
               emit ctxt [Br 1];
             );
             true
@@ -948,21 +1001,21 @@ let rec compile_computation ctxt state comp dst =
       if ends_with_partial then emit ctxt [Unreachable]
     );
     None
-  | Ast.Apply (exp1, exp2) -> 
-    let ty, _= Ty.infer_computation state comp in 
-    match exp1 with 
+  | Apply (exp1, exp2) -> 
+    let ty = et comp in 
+    match exp1.it with 
     | (RecLambda _ | Lambda _) -> 
-      (match compile_expression ctxt state exp1 Lower.rigid_rep with
+      (match compile_expression ctxt exp1 Lower.rigid_rep with
       | Some {funcidx = f; arity = n; _} when n = 1 ->
         compile_push_args ctxt 1 0 (fun i ->
-          ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
+          ignore (compile_expression ctxt exp2 (Lower.arg_rep), i)
         );
         emit ctxt [
           Call (f);
         ]
       | Some {typeidx = t; arity = n; _} ->
         compile_push_args ctxt 1 0 (fun i ->
-          ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
+          ignore (compile_expression ctxt exp2 (Lower.arg_rep), i)
         );
         emit ctxt [
           Call (compile_func_apply n t ctxt);
@@ -977,14 +1030,14 @@ let rec compile_computation ctxt state comp dst =
       (match (Env.find_func x !env).it with
       | {funcidx = f; arity = n; _} when n = 1 ->
         compile_push_args ctxt 1 0 (fun i ->
-          ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
+          ignore (compile_expression ctxt exp2 (Lower.arg_rep), i)
         );
         emit ctxt [
           Call f;
         ]
       | {typeidx = t; arity = n; _} ->
         compile_push_args ctxt 1 0 (fun i ->
-          ignore (compile_expression ctxt state exp2 (Lower.arg_rep), i)
+          ignore (compile_expression ctxt exp2 (Lower.arg_rep), i)
         );
         emit ctxt [
           Call (compile_func_apply n t ctxt);
@@ -1003,57 +1056,61 @@ let compile_ty_defs ctxt ty_defs =
       match ty with 
       | Ast.TyInline t -> 
         let tyidx = Lower.lower_inline_type ctxt t in 
-          env := Env.extend_typ !env name ((@@) Lower.([(None, {tag = -1; typeidx = tyidx})]))
+          env := Env.extend_typ !env name (make_phrase Lower.([(None, {tag = -1; typeidx = tyidx})]))
       | Ast.TySum t_ls -> 
         let x = (List.mapi (fun i (lbl, ty_opt) -> 
           let tyidx = (Lower.lower_sum_type ctxt ty_opt) in 
-          env := Env.extend_lbl !env lbl ((@@) Lower.{tag = i; typeidx = tyidx});
+          Lower.extend_lbl ctxt lbl Lower.{tag = i; typeidx = tyidx};
           Lower.((Some lbl, {tag = i; typeidx = tyidx})))
         ) t_ls in
-         env := Env.extend_typ !env name ((@@) x)
+         env := Env.extend_typ !env name (make_phrase x)
   in
   List.iter compile_ty_def ty_defs
 
-let compile_command ctxt state comp dst = 
+let compile_command ctxt comp dst = 
   match comp with 
-  | Ast.TyDef ty_defs -> 
+  | Typed.TyDef ty_defs -> 
     compile_ty_defs ctxt ty_defs
-  | Ast.TopLet (name, exp) -> 
-    (match exp with
-    | Ast.Lambda _ -> 
-      let _, env = Lower.current_scope ctxt in
-      let funcloc_opt = compile_func ctxt state exp in
-      env := Env.extend_func !env name ((@@) (funcloc_opt))
-    | Ast.RecLambda (var, _) -> 
-      let _, env = Lower.current_scope ctxt in
-      let funcloc_opt = compile_func_rec ctxt state exp var in
-      env := Env.extend_func !env name ((@@) (funcloc_opt))
+  | TopLet (name, exp) -> 
+    let ctxt' = Lower.enter_scope ctxt Lower.LocalScope in
+    (match it exp with
+    | Lambda _ -> 
+      print_endline "lam";
+      let _, env = Lower.current_scope ctxt' in
+      let funcloc_opt = compile_func ctxt' exp in
+      env := Env.extend_func !env name (make_phrase (funcloc_opt))
+    | RecLambda (var, _) -> 
+      print_endline "rec_lam";
+      let _, env = Lower.current_scope ctxt' in
+      let funcloc_opt = compile_func_rec ctxt' exp var (et exp)in
+      env := Env.extend_func !env name (make_phrase (funcloc_opt))
     | _ -> 
-      let var_ty, _ = Ty.infer_expression state exp in
-      compile_val_var_bind ctxt name var_ty dst None
+      compile_val_var_bind ctxt name (et exp) dst None
     )
-  | Ast.TopDo cmp -> 
+  | TopDo cmp -> 
     let _, env = Lower.current_scope ctxt in
-    let lam = Ast.Lambda (Ast.PNonbinding,cmp) in
-    let func_loc = compile_func ctxt state lam in 
+    let pat = Typed.make_pattern Typed.PNonbinding (Ast.TyTuple []) in
+    let abs = Typed.make_abstraction (pat, cmp) (Ast.TyArrow (Ast.TyTuple [], et cmp)) in
+    let lam = Typed.make_expression (Typed.Lambda abs) (et abs) in
+    let func_loc = compile_func ctxt lam in 
     let name = "run_" ^ (string_of_int !env.runs) in
     emit_func_export ctxt ("func " ^ name) func_loc.funcidx;
     env := Env.update_runs !env 
 
-let rec compile_commands ctxt state ds dst =
+let rec compile_commands ctxt ds dst =
   match ds with
   | [] ->
     compile_coerce ctxt Lower.unit_rep dst (Ast.TyTuple [])
   | [d] ->
-    compile_command ctxt state d dst
+    compile_command ctxt d dst
   | d::ds' ->
-    compile_command ctxt state d DropRep;
-    compile_commands ctxt state ds' dst
+    compile_command ctxt d DropRep;
+    compile_commands ctxt ds' dst
 
-let compile_prog cmds state : unit =
+let compile_prog cmds : unit =
   let ctxt = Lower.enter_scope (Lower.make_ctxt ()) GlobalScope in
   (* Compile declarations directly *)
-  compile_commands ctxt state cmds (Lower.global_rep ());
+  compile_commands ctxt cmds (Lower.global_rep ());
   (* Directly emit exports for modules and values *)
   let _, env = Lower.current_scope ctxt in
   Env.iter_vals (fun x' locs ->

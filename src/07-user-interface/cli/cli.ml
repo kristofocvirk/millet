@@ -51,11 +51,11 @@ let main () =
       (let state = Loader.load_source Loader.initial_state Loader.stdlib_source
       in
       let state' = List.fold_left Loader.load_file state config.filenames in
-      Compiler.compile_prog state'.cmds state'.typechecker)
+      Compiler.compile_prog state'.cmds)
       |> ignore
     | (false, true) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
-      Compiler.compile_prog state'.cmds state'.typechecker)
+      Compiler.compile_prog state'.cmds)
       |> ignore
     | (false, false) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in

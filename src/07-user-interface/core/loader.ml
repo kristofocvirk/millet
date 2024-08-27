@@ -1,12 +1,13 @@
 open Utils
 module Ast = Language.Ast
+module Typed = Typechecker.TypedAst
 
 module Loader (Backend : Backend.S) = struct
   type state = {
     desugarer : Desugarer.state;
     backend : Backend.load_state;
     typechecker : Typechecker.state;
-    cmds : Ast.command list
+    cmds : Typed.command list
   }
 
   let load_primitive state prim =
@@ -48,7 +49,7 @@ module Loader (Backend : Backend.S) = struct
           "unrecognised symbol."
 
   let execute_command state = function
-    | Ast.TyDef ty_defs as cmd ->
+    | Ast.TyDef ty_defs ->
         let typechecker_state' =
           Typechecker.add_type_definitions state.typechecker ty_defs
         in
@@ -57,10 +58,10 @@ module Loader (Backend : Backend.S) = struct
           state with
           typechecker = typechecker_state';
           backend = backend_state';
-          cmds = state.cmds @ [cmd]
+          cmds = state.cmds @ [TyDef ty_defs]
         }
-    | Ast.TopLet (x, expr) as cmd ->
-        let typechecker_state' =
+    | Ast.TopLet (x, expr) ->
+        let typechecker_state', cmd =
           Typechecker.add_top_definition state.typechecker x expr
         in
         let backend_state' = Backend.load_top_let state.backend x expr in
@@ -70,10 +71,10 @@ module Loader (Backend : Backend.S) = struct
           backend = backend_state';
           cmds = state.cmds @ [cmd]
         }
-    | Ast.TopDo comp as cmd ->
-        let _ = Typechecker.infer state.typechecker comp in
+    | Ast.TopDo comp ->
+        let _, cmd = Typechecker.infer state.typechecker comp in
         let backend_state' = Backend.load_top_do state.backend comp in
-        { state with backend = backend_state'; cmds = state.cmds @ [cmd] }
+        { state with backend = backend_state'; cmds = state.cmds @ [TopDo cmd] }
 
   let load_commands state cmds =
     let desugarer_state', cmds' =

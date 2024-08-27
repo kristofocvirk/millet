@@ -1,6 +1,7 @@
 open Emit
 module Types = Wasm.Types
 module Ast = Language.Ast
+module Source = Utils.Source
 module Const = Language.Const
 module Env = Env
 
@@ -85,7 +86,7 @@ let clos_env_idx = 2  (* first environment entry *)
 
 type data_con = {tag : int; typeidx : int}
 type data = (Ast.label option * data_con) list
-type env = (loc * func_loc option, data, data_con, func_loc) Env.env
+type env = (loc * func_loc option, data, func_loc) Env.env
 type scope = PreScope | LocalScope | GlobalScope
 
 let make_env () =
@@ -113,13 +114,23 @@ type clos_idxs = {codeidx : int; closidx : int; envidx : int}
 type ctxt_ext =
   { envs : (scope * env ref) list;
     clostypes : clos_idxs ClosMap.t ref;
+    lbls : data_con Ast.LabelMap.t ref;
     data : int ref;
   }
 type ctxt = ctxt_ext Emit.ctxt
 
+let extend_lbl (ctxt : ctxt) y t = ctxt.ext.lbls := Ast.LabelMap.add y t !(ctxt.ext.lbls)
+let find_lbl y ctxt = 
+  try Ast.LabelMap.find y !(ctxt.ext.lbls)
+  with Not_found -> Env.lbl_not_found y
+
+let find_opt_lbl y ctxt =
+  Ast.LabelMap.find_opt y !(ctxt.ext.lbls)
+
 let make_ext_ctxt () : ctxt_ext =
   { envs = [(PreScope, make_env ())];
     clostypes = ref ClosMap.empty;
+    lbls = ref Ast.LabelMap.empty;
     data = ref (-1);
   }
 let make_ctxt () : ctxt = Emit.make_ctxt (make_ext_ctxt ())
@@ -197,7 +208,9 @@ and lower_var_type ctxt t =
   | Ast.TyArrow (_, _) as x -> 
     let num_args = arity x in
     snd (lower_func_type ctxt num_args)
-  | _ -> assert false
+  | Ast.TyParam _ -> print_endline "param"; assert false
+  | Ast.TyConst _ -> print_endline "const"; assert false
+  | Ast.TyApply _ -> print_endline "apply"; assert false
 
 and lower_anyclos_type ctxt : int =
   emit_type ctxt (sub [] (Types.DefStructT (Types.StructT [field (Types.NumT Types.I32T)])))

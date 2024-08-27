@@ -1,6 +1,9 @@
 open Utils
 module Ast = Language.Ast
 module Const = Language.Const
+module TypedAst = TypedAst
+
+let make_phrase x t = Source.{it = x; et = Some t} 
 
 type state = {
   variables : (Ast.ty_param list * Ast.ty) Ast.VariableMap.t;
@@ -98,31 +101,41 @@ let infer_variant state lbl =
 let rec infer_pattern state = function
   | Ast.PVar x ->
       let ty = fresh_ty () in
-      (ty, [ (x, ty) ], [])
+      let pat = TypedAst.make_pattern (TypedAst.PVar x) ty in
+      (ty, [ (x, ty) ], [], pat)
   | Ast.PAs (pat, x) ->
-      let ty, vars, eqs = infer_pattern state pat in
-      (ty, (x, ty) :: vars, eqs)
+      let ty, vars, eqs, pat' = infer_pattern state pat in
+      let phrase_pat = TypedAst.make_pattern (TypedAst.PAs (pat', x)) ty in
+      (ty, (x, ty) :: vars, eqs, phrase_pat)
   | Ast.PAnnotated (pat, ty) ->
-      let ty', vars, eqs = infer_pattern state pat in
-      (ty, vars, (ty, ty') :: eqs)
-  | Ast.PConst c -> (Ast.TyConst (Const.infer_ty c), [], [])
+      let ty', vars, eqs, pat' = infer_pattern state pat in
+      let phrase_pat = TypedAst.make_pattern (PAnnotated (pat', ty)) ty in
+      (ty, vars, (ty, ty') :: eqs, phrase_pat)
+  | Ast.PConst c as x-> 
+    let pat = TypedAst.make_const_pat x in
+    (Ast.TyConst (Const.infer_ty c), [], [], pat)
   | Ast.PNonbinding ->
       let ty = fresh_ty () in
-      (ty, [], [])
+      let pat = TypedAst.make_pattern PNonbinding ty in
+      (ty, [], [], pat)
   | Ast.PTuple pats ->
-      let fold pat (tys, vars, eqs) =
-        let ty', vars', eqs' = infer_pattern state pat in
-        (ty' :: tys, vars' @ vars, eqs' @ eqs)
+      let fold pat (tys, vars, eqs, pats) =
+        let ty', vars', eqs', pat' = infer_pattern state pat in
+        (ty' :: tys, vars' @ vars, eqs' @ eqs, pat' :: pats)
       in
-      let tys, vars, eqs = List.fold_right fold pats ([], [], []) in
-      (Ast.TyTuple tys, vars, eqs)
+      let tys, vars, eqs, pats = List.fold_right fold pats ([], [], [], []) in
+      let phrase_pat = TypedAst.make_pattern (PTuple pats) (Ast.TyTuple tys) in
+      (Ast.TyTuple tys, vars, eqs, phrase_pat)
   | Ast.PVariant (lbl, pat) -> (
       let ty_in, ty_out = infer_variant state lbl in
       match (ty_in, pat) with
-      | None, None -> (ty_out, [], [])
+      | None, None -> 
+        let phrase_pat = TypedAst.make_pattern (PVariant (lbl, None)) ty_out in
+        (ty_out, [], [], phrase_pat)
       | Some ty_in, Some pat ->
-          let ty, vars, eqs = infer_pattern state pat in
-          (ty_out, vars, (ty_in, ty) :: eqs)
+          let ty, vars, eqs, pat' = infer_pattern state pat in
+          let phrase_pat = TypedAst.make_pattern (PVariant (lbl, Some pat')) ty_out in
+          (ty_out, vars, (ty_in, ty) :: eqs, phrase_pat)
       | None, Some _ | Some _, None ->
           Error.typing "Variant optional argument mismatch")
 
@@ -130,63 +143,82 @@ let rec infer_expression state = function
   | Ast.Var x ->
       let params, ty = Ast.VariableMap.find x state.variables in
       let subst = refreshing_subst params in
-      (Ast.substitute_ty subst ty, [])
-  | Ast.Const c -> (Ast.TyConst (Const.infer_ty c), [])
+      let ty' = Ast.substitute_ty subst ty in
+      let expr = TypedAst.make_expression (Var x) ty' in
+      (ty', [], expr)
+  | Ast.Const c as x -> 
+    let expr = TypedAst.make_const_expr x in
+    (Ast.TyConst (Const.infer_ty c), [], expr)
   | Ast.Annotated (expr, ty) ->
-      let ty', eqs = infer_expression state expr in
-      (ty, (ty, ty') :: eqs)
+      let ty', eqs, expr' = infer_expression state expr in
+      let phrase_expr = TypedAst.make_expression (Annotated (expr', ty)) ty in
+      (ty, (ty, ty') :: eqs, phrase_expr)
   | Ast.Tuple exprs ->
-      let fold expr (tys, eqs) =
-        let ty', eqs' = infer_expression state expr in
-        (ty' :: tys, eqs' @ eqs)
+      let fold expr (tys, eqs, exprs) =
+        let ty', eqs', expr' = infer_expression state expr in
+        (ty' :: tys, eqs' @ eqs, expr' :: exprs)
       in
-      let tys, eqs = List.fold_right fold exprs ([], []) in
-      (Ast.TyTuple tys, eqs)
+      let tys, eqs, exprs = List.fold_right fold exprs ([], [], []) in
+      let phrase_expr = TypedAst.make_expression (Tuple exprs) (Ast.TyTuple tys) in
+      (Ast.TyTuple tys, eqs, phrase_expr)
   | Ast.Lambda abs ->
-      let ty, ty', eqs = infer_abstraction state abs in
-      (Ast.TyArrow (ty, ty'), eqs)
+      let ty, ty', eqs, abs = infer_abstraction state abs in
+      let expr = TypedAst.make_expression (Lambda abs) (TyArrow (ty, ty')) in
+      (Ast.TyArrow (ty, ty'), eqs, expr)
   | Ast.RecLambda (f, abs) ->
       let f_ty = fresh_ty () in
       let state' = extend_variables state [ (f, f_ty) ] in
-      let ty, ty', eqs = infer_abstraction state' abs in
+      let ty, ty', eqs, abs = infer_abstraction state' abs in
       let out_ty = Ast.TyArrow (ty, ty') in
-      (out_ty, (f_ty, out_ty) :: eqs)
+      let expr = TypedAst.make_expression (RecLambda (f, abs)) (TyArrow (f_ty, out_ty)) in
+      (out_ty, (f_ty, out_ty) :: eqs, expr)
   | Ast.Variant (lbl, expr) -> (
       let ty_in, ty_out = infer_variant state lbl in
       match (ty_in, expr) with
-      | None, None -> (ty_out, [])
+      | None, None -> 
+        let expr = TypedAst.make_expression (Variant (lbl, None)) ty_out in
+        (ty_out, [], expr)
       | Some ty_in, Some expr ->
-          let ty, eqs = infer_expression state expr in
-          (ty_out, (ty_in, ty) :: eqs)
+          let ty, eqs, expr' = infer_expression state expr in
+          let phrase_expr = TypedAst.make_expression (Variant (lbl, Some expr')) ty_out in
+          (ty_out, (ty_in, ty) :: eqs, phrase_expr)
       | None, Some _ | Some _, None ->
           Error.typing "Variant optional argument mismatch")
 
 and infer_computation state = function
   | Ast.Return expr ->
-      let ty, eqs = infer_expression state expr in
-      (ty, eqs)
+      let ty, eqs, expr' = infer_expression state expr in
+      let comp = TypedAst.make_computation (Return expr') ty in
+      (ty, eqs, comp)
   | Ast.Do (comp1, comp2) ->
-      let ty1, eqs1 = infer_computation state comp1 in
-      let ty1', ty2, eqs2 = infer_abstraction state comp2 in
-      (ty2, ((ty1, ty1') :: eqs1) @ eqs2)
+      let ty1, eqs1, comp1' = infer_computation state comp1 in
+      let ty1', ty2, eqs2, abs' = infer_abstraction state comp2 in
+      let comp = TypedAst.make_computation (Do (comp1', abs')) ty2 in
+      (ty2, ((ty1, ty1') :: eqs1) @ eqs2, comp)
   | Ast.Apply (e1, e2) ->
-      let t1, eqs1 = infer_expression state e1
-      and t2, eqs2 = infer_expression state e2
+      let t1, eqs1, expr1 = infer_expression state e1
+      and t2, eqs2, expr2 = infer_expression state e2
       and a = fresh_ty () in
-      (a, ((t1, Ast.TyArrow (t2, a)) :: eqs1) @ eqs2)
+      let comp = TypedAst.make_computation (Apply (expr1, expr2)) a in
+      (a, ((t1, Ast.TyArrow (t2, a)) :: eqs1) @ eqs2, comp)
   | Ast.Match (e, cases) ->
-      let ty1, eqs = infer_expression state e and ty2 = fresh_ty () in
-      let fold eqs abs =
-        let ty1', ty2', eqs' = infer_abstraction state abs in
-        ((ty1, ty1') :: (ty2, ty2') :: eqs') @ eqs
-      in
-      (ty2, List.fold_left fold eqs cases)
+    let ty1, eqs, expr = infer_expression state e and ty2 = fresh_ty () in
+    let fold (eqs, abstractions) abs =
+        let ty1', ty2', eqs', abs' = infer_abstraction state abs in
+        let updated_eqs = ((ty1, ty1') :: (ty2, ty2') :: eqs') @ eqs in
+        let updated_abstractions = abs' :: abstractions in
+        (updated_eqs, updated_abstractions)
+    in
+    let eqs, abstractions = List.fold_left fold (eqs, []) cases in
+    let comp = TypedAst.make_computation (Match (expr, abstractions)) ty2 in
+    (ty2, eqs, comp)
 
 and infer_abstraction state (pat, comp) =
-  let ty, vars, eqs = infer_pattern state pat in
+  let ty, vars, eqs, pat' = infer_pattern state pat in
   let state' = extend_variables state vars in
-  let ty', eqs' = infer_computation state' comp in
-  (ty, ty', eqs @ eqs')
+  let ty', eqs', comp' = infer_computation state' comp in
+  let abs = TypedAst.make_abstraction (pat', comp') (TyArrow (ty, ty')) in
+  (ty, ty', eqs @ eqs', abs)
 
 let subst_equations sbst =
   let subst_equation (t1, t2) =
@@ -247,21 +279,21 @@ let rec unify state = function
         (Ast.print_ty print_param t2)
 
 let infer state e =
-  let t, eqs = infer_computation state e in
+  let t, eqs, comp = infer_computation state e in
   let sbst = unify state eqs in
   let t' = Ast.substitute_ty sbst t in
-  t'
+  t', comp
 
 let add_external_function x ty_sch state =
   { state with variables = Ast.VariableMap.add x ty_sch state.variables }
 
 let add_top_definition state x expr =
-  let ty, eqs = infer_expression state expr in
+  let ty, eqs, expr'  = infer_expression state expr in
   let subst = unify state eqs in
   let ty' = Ast.substitute_ty subst ty in
   let free_vars = Ast.free_vars ty' |> Ast.TyParamSet.elements in
   let ty_sch = (free_vars, ty') in
-  add_external_function x ty_sch state
+  add_external_function x ty_sch state, TypedAst.TopLet (x, expr')
 
 let add_type_definitions state ty_defs =
   let state' =
@@ -291,64 +323,3 @@ let rec eq t1 t2 =
     List.length params1 = List.length params2 && List.for_all2 eq params1 params2 && name1 == name2
   | Ast.TyConst ty1, Ast.TyConst ty2 -> ty1 == ty2
   | ty1, ty2 -> ty1 = ty2
-
-let (++) s1 s2 =
-  Ast.VariableMap.union (fun _ _ y2 -> Some y2)  s1 s2
-let (--) s1 s2 =
-  Ast.VariableMap.fold (fun x _ m1' -> Ast.VariableMap.remove x m1') s1 s2
-
-let empty = Ast.VariableMap.empty 
-
-let list f xs = List.fold_left (++) empty (List.map f xs)
-let val_var x t = Ast.VariableMap.singleton x t
-
-let rec bound_pat state p =
-  let pat_ty, _, _ = infer_pattern state p in
-  match p with
-  | Ast.PVar x -> val_var x pat_ty
-  | Ast.PAnnotated (pat, _) -> bound_pat state pat 
-  | Ast.PAs (_, var)-> val_var var pat_ty
-  | Ast.PTuple ps -> list (bound_pat state) ps 
-  | Ast.PVariant (_, pat) -> 
-    (match pat with 
-    | Some x -> bound_pat state x
-    | None -> empty)
-  | Ast.PConst _ | PNonbinding -> empty
-
-let rec free_pat p =
-  match p with
-  | Ast.PAnnotated (pat, _) -> free_pat pat
-  | PAs (pat, _) -> free_pat pat
-  | PTuple ps ->  list free_pat ps
-  | PVariant (_, pat) ->
-    (match pat with
-    | Some x -> free_pat x
-    | None -> empty) 
-  | PConst _ | PNonbinding | PVar _ -> empty
-
-let rec free_exp state e =
-  match e with
-  | Ast.Var var -> 
-    let ty, _ = infer_expression state e in
-    val_var var ty
-  | Const _ -> empty 
-  | Annotated (exp, _) -> free_exp state exp 
-  | Tuple exps -> list (free_exp state) exps 
-  | Variant (_, exp) -> 
-    (match exp with 
-    | Some x -> free_exp state x
-    | None -> empty) 
-  | Lambda abs -> free_case state abs
-  | RecLambda (var, abs) -> 
-    let ty, _ = infer_expression state (Ast.Var var) in
-    free_case state abs -- val_var var ty 
-
-and free_case state (p, e) =
-  free_comp state e -- bound_pat state p ++ free_pat p
-
-and free_comp state c = 
-  match c with 
-  | Ast.Return exp -> free_exp state exp 
-  | Do (comp, abs) -> free_comp state comp ++ free_case state abs
-  | Match (exp, pes) -> free_exp state exp ++ list (free_case state) pes
-  | Apply (e1, e2) -> free_exp state e1 ++ free_exp state e2 
