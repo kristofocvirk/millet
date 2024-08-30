@@ -105,15 +105,6 @@ let string_of_computation c =
   Format.flush_str_formatter ()
 
 
-let (++) s1 s2 =
-  Ast.VariableMap.union (fun _ _ y2 -> Some y2)  s1 s2
-let (--) s1 s2 =
-  Ast.VariableMap.fold (fun x _ m1' -> Ast.VariableMap.remove x m1') s1 s2
-
-let empty = Ast.VariableMap.empty 
-
-let list f xs = List.fold_left (++) empty (List.map f xs)
-let val_var x t = Ast.VariableMap.singleton x t
 
 
 let make_pattern pat ty : pattern = make_phrase pat ty
@@ -137,6 +128,16 @@ let make_const_pat const : pattern =
   | Ast.PConst (Const.Boolean b) ->Source.{it = PConst (Const.Boolean b); et = Some (Ast.TyConst Const.BooleanTy)}
   | _ -> failwith "this function only takes constant patterns"
 
+let (++) s1 s2 =
+  Ast.VariableMap.union (fun _ _ y2 -> Some y2)  s1 s2
+let (--) s1 s2 =
+  Ast.VariableMap.fold (fun x _ m1' -> Ast.VariableMap.remove x m1') s2 s1
+
+let empty = Ast.VariableMap.empty 
+
+let list f xs = List.fold_left (++) empty (List.map f xs)
+let val_var x t = Ast.VariableMap.singleton x t
+
 let rec bound_pat p =
   let t = Source.et p in
   match Source.it p with
@@ -149,17 +150,6 @@ let rec bound_pat p =
     | Some x -> bound_pat x
     | None -> empty)
   | PConst _ | PNonbinding -> empty
-
-let rec free_pat p =
-  match Source.it p with
-  | PAnnotated (pat, _) -> free_pat pat
-  | PAs (pat, _) -> free_pat pat
-  | PTuple ps ->  list free_pat ps
-  | PVariant (_, pat) ->
-    (match pat with
-    | Some x -> free_pat x
-    | None -> empty) 
-  | PConst _ | PNonbinding | PVar _ -> empty
 
 let rec free_exp e =
   let ty = Source.et e in
@@ -178,7 +168,9 @@ let rec free_exp e =
     free_case abs -- val_var var ty 
 
 and free_case {it = (p, c); _} =
-  free_comp c -- bound_pat p ++ free_pat p
+  let free_c = free_comp c in
+  let bound_p = bound_pat p in
+  free_c  -- bound_p
 
 and free_comp c = 
   match Source.it c with 

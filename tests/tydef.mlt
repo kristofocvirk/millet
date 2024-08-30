@@ -17,7 +17,6 @@ and bull =
    | Legs of bull list
    | Horns of cow
 
-
 run Tail
 
 (* Records are currently not supported.

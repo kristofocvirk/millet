@@ -75,7 +75,7 @@ let loc_rep = function
   | ClosureLoc _ -> clos_rep ()
 
 
-let max_func_arity = if !headless then 4 else 12
+let max_func_arity = 4
 
 let clos_arity_idx = 0
 let clos_code_idx = 1
@@ -85,7 +85,7 @@ let clos_env_idx = 2  (* first environment entry *)
 (* Environment *)
 
 type data_con = {tag : int; typeidx : int}
-type data = (Ast.label option * data_con) list
+type data = (Ast.label * data_con) list
 type env = (loc * func_loc option, data, func_loc) Env.env
 type scope = PreScope | LocalScope | GlobalScope
 
@@ -114,23 +114,13 @@ type clos_idxs = {codeidx : int; closidx : int; envidx : int}
 type ctxt_ext =
   { envs : (scope * env ref) list;
     clostypes : clos_idxs ClosMap.t ref;
-    lbls : data_con Ast.LabelMap.t ref;
     data : int ref;
   }
 type ctxt = ctxt_ext Emit.ctxt
 
-let extend_lbl (ctxt : ctxt) y t = ctxt.ext.lbls := Ast.LabelMap.add y t !(ctxt.ext.lbls)
-let find_lbl y ctxt = 
-  try Ast.LabelMap.find y !(ctxt.ext.lbls)
-  with Not_found -> Env.lbl_not_found y
-
-let find_opt_lbl y ctxt =
-  Ast.LabelMap.find_opt y !(ctxt.ext.lbls)
-
 let make_ext_ctxt () : ctxt_ext =
   { envs = [(PreScope, make_env ())];
     clostypes = ref ClosMap.empty;
-    lbls = ref Ast.LabelMap.empty;
     data = ref (-1);
   }
 let make_ctxt () : ctxt = Emit.make_ctxt (make_ext_ctxt ())
@@ -159,7 +149,8 @@ let ref_ x = Types.RefT (Types.NoNull, Types.VarHT (Types.StatX x))
 
 let rec lower_value_type ctxt rep t : Types.val_type =
   match t, rep with
-  | t, (BlockRep n | BoxedRep n) -> RefT (lower_ref n (lower_heap_type ctxt t))
+  | t, (BlockRep n | BoxedRep n) 
+  | (Ast.TyApply _ as t), BoxedAbsRep n -> RefT (lower_ref n (lower_heap_type ctxt t))
   | _, BoxedAbsRep n -> RefT (lower_ref n abs)
   | Ast.TyConst Const.BooleanTy, _ -> NumT I32T 
   | Ast.TyConst Const.IntegerTy, _ -> NumT I32T 
@@ -171,6 +162,7 @@ and lower_heap_type ctxt t : Types.heap_type =
   match t with
   | Ast.TyConst Const.BooleanTy | Ast.TyConst Const.IntegerTy -> I31HT
   | Ast.TyTuple [] -> EqHT 
+  | Ast.TyApply _ -> EqHT
   | t -> (VarHT (Types.StatX (lower_var_type ctxt t)))
 
 and lower_anycon_type ctxt : int =
@@ -191,7 +183,12 @@ and lower_inline_type ctxt t : int =
   let ft = (fun x -> Types.FieldT (Types.Cons, Types.ValStorageT x)) vt in
   emit_type ctxt (sub [Types.VarHT (Types.StatX anycon)] (Types.DefStructT (Types.StructT (ft :: []))))
 
-
+and lower_ty_apply_type ctxt ts : int =
+  if ts = [] then -1 else
+  let anycon = lower_anycon_type ctxt in
+  let vts = List.map (lower_value_type ctxt field_rep) ts in
+  let fts = List.map field vts in
+  emit_type ctxt (sub [Types.VarHT (Types.StatX anycon)] (Types.DefStructT (Types.StructT (field (Types.NumT Types.I32T) :: fts))))
 
 and lower_var_type ctxt t =
   let rec arity f = 
@@ -208,9 +205,7 @@ and lower_var_type ctxt t =
   | Ast.TyArrow (_, _) as x -> 
     let num_args = arity x in
     snd (lower_func_type ctxt num_args)
-  | Ast.TyParam _ -> print_endline "param"; assert false
-  | Ast.TyConst _ -> print_endline "const"; assert false
-  | Ast.TyApply _ -> print_endline "apply"; assert false
+  | _ -> Ast.print_ty (Ast.new_print_param ()) t Format.std_formatter; failwith "tyapply"
 
 and lower_anyclos_type ctxt : int =
   emit_type ctxt (sub [] (Types.DefStructT (Types.StructT [field (Types.NumT Types.I32T)])))
@@ -264,15 +259,8 @@ and lower_block_type ctxt rep t : Types.block_type =
 
 (* Closure environments *)
 
-let lower_clos_env ctxt vars rec_xs
-  : Types.field_type list * (Ast.variable * Ast.ty * int) list =
-  let fixups = ref [] in
-  let flds =
-    List.mapi (fun i (x, t) ->
-      if Ast.VariableMap.mem x rec_xs then begin
-        fixups := (x, t, i) :: !fixups;
-        field_mut (lower_value_type ctxt (local_rep ()) t)
-      end else
-        field (lower_value_type ctxt (clos_rep ()) t)
-    ) (Ast.VariableMap.bindings vars)
-  in flds, !fixups
+let lower_clos_env ctxt vars
+  : Types.field_type list =
+  List.map (fun (_, t) ->
+    field (lower_value_type ctxt (clos_rep ()) t)
+  ) (Ast.VariableMap.bindings vars)

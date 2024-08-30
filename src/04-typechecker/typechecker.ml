@@ -278,10 +278,64 @@ let rec unify state = function
         (Ast.print_ty print_param t1)
         (Ast.print_ty print_param t2)
 
+let update_et_value phrase sbst= 
+  match phrase.Source.et with
+  | None -> ()
+  | Some x -> Source.update_et_value phrase (Ast.substitute_ty sbst x)
+
+let rec update_pattern sbst pat =
+  update_et_value pat sbst;
+  match pat.Source.it with 
+  | TypedAst.PAnnotated (p, _) -> update_pattern sbst p
+  | PAs (p, _) -> update_pattern sbst p
+  | PTuple ps -> List.iter (update_pattern sbst) ps
+  | PVariant (_, p) -> 
+    (match p with 
+    | None -> ()
+    | Some p -> update_pattern sbst p)
+  | _ -> ()
+
+and update_expression sbst expr =
+  update_et_value expr sbst;
+  match expr.Source.it with
+  | TypedAst.Annotated (e, _) -> update_expression sbst e 
+  | Tuple es -> 
+    List.iter (update_expression sbst) es
+  | Variant (_, e) -> 
+    (match e with 
+    | None -> ()
+    | Some e -> update_expression sbst e)
+  | Lambda abs -> update_abstraction sbst abs 
+  | RecLambda (_, abs) -> update_abstraction sbst abs 
+  | _ -> ()
+
+and update_computation sbst (comp : TypedAst.computation) = 
+  update_et_value comp sbst;
+  match comp.Source.it with 
+  | TypedAst.Match (exp, abs) -> 
+    update_expression sbst exp;
+    List.iter (update_abstraction sbst) abs;
+  | Do (comp1, comp2)-> 
+    update_computation sbst comp1;
+    update_abstraction sbst comp2 ;
+  | Apply (exp1, exp2) -> 
+    update_expression sbst exp1;
+    update_expression sbst exp2;
+  | Return x -> 
+    update_expression sbst x;
+
+and update_abstraction sbst (abs : TypedAst.abstraction) =
+  match abs.Source.it with
+  | (pat, comp) ->
+    update_pattern sbst pat;
+    update_computation sbst comp;
+    update_et_value abs sbst
+
 let infer state e =
   let t, eqs, comp = infer_computation state e in
   let sbst = unify state eqs in
   let t' = Ast.substitute_ty sbst t in
+  update_computation sbst comp;
   t', comp
 
 let add_external_function x ty_sch state =
@@ -293,6 +347,7 @@ let add_top_definition state x expr =
   let ty' = Ast.substitute_ty subst ty in
   let free_vars = Ast.free_vars ty' |> Ast.TyParamSet.elements in
   let ty_sch = (free_vars, ty') in
+  update_expression subst expr';
   add_external_function x ty_sch state, TypedAst.TopLet (x, expr')
 
 let add_type_definitions state ty_defs =
