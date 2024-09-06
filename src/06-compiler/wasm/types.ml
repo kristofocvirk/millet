@@ -344,7 +344,7 @@ let rec string_of_heap_type = function
   | BotHT -> "something"
 
 and string_of_ref_type = function
-  | (nul, t) -> "(ref " ^ string_of_null nul ^ string_of_heap_type t ^ ")"
+  | (null, t) -> "(ref " ^ string_of_null null ^ string_of_heap_type t ^ ")"
 
 and string_of_val_type = function
   | NumT t -> string_of_num_type t

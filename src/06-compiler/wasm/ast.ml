@@ -25,8 +25,16 @@ type instr =
   | Shl of Types.num_type
   | Shr of Types.num_type
   | ShrU of Types.num_type
+  | DivS of Types.num_type
+  | Rem of Types.num_type
+  | Neg of Types.num_type
   | Ne of Types.num_type
+  | Eq of Types.num_type
   | Eqz of Types.num_type
+  | Lt of Types.num_type
+  | Le of Types.num_type
+  | Ge of Types.num_type
+  | Gt of Types.num_type
   
   (* Control flow *)
   | Call of int
@@ -37,6 +45,7 @@ type instr =
   | Loop of Types.block_type * instr list   (* (loop ... ) *)
   | Br of int            (* (br <label_index>) *)
   | BrIf of int          (* (br_if <label_index>) *)
+  | BrOnCast of int * Types.ref_type * Types.ref_type     (* break on type *)
   | BrTable of int list * int (* (br_table <labels> <default>) *)
   | Unreachable          (* (unreachable) *)
   

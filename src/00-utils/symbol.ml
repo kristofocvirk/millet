@@ -1,6 +1,7 @@
 module type S = sig
   type t
 
+  val to_string : t -> string
   val compare : t -> t -> int
   val fresh : string -> t
   val refresh : t -> t
@@ -9,10 +10,9 @@ end
 
 module Make () : S = struct
   type t = int * string
-
+  let to_string (_, s) = s
   let compare (n1, _) (n2, _) = Int.compare n1 n2
   let count = ref (-1)
-
   let fresh ann =
     incr count;
     (!count, ann)

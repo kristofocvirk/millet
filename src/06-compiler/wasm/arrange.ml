@@ -199,6 +199,10 @@ let block_type = function
   | VarBlockType x -> [Node ("type " ^ var x, [])]
   | ValBlockType ts -> decls "result" (list_of_opt ts)
 
+let suffix = function
+  | I32T | I64T -> "_s"
+  | F32T | F64T -> "" 
+
 let rec instr e =
   let head, inner =
     match e with
@@ -213,6 +217,8 @@ let rec instr e =
     | BrIf x -> "br_if " ^ string_of_int x, []
     | BrTable (xs, x) ->
       "br_table " ^ String.concat " " (List.map string_of_int (xs @ [x])), []
+    | BrOnCast (x, t1, t2) ->
+      "br_on_cast " ^ var x, [Atom (ref_type t1); Atom (ref_type t2)]
     | Return -> "return", []
     | Call x -> "call " ^ string_of_int x, []
     | CallRef x -> "call_ref " ^ string_of_int x, []
@@ -241,15 +247,23 @@ let rec instr e =
     | ArrayGet (x, exto) -> "array.get" ^ opt_s extension exto ^ " " ^ string_of_int x, []
     | ArraySet x -> "array.set " ^ string_of_int x, []
     | ArrayLen -> "array.len", []
-    | Add nt -> "add " ^ num_type nt, []
-    | Sub nt -> "sub " ^ num_type nt, []
-    | Mul nt -> "mul " ^ num_type nt, []
-    | Div nt -> "div " ^ num_type nt, []
-    | Shl nt -> "shl " ^ num_type nt, []
-    | Shr nt -> "shr " ^ num_type nt, []
-    | ShrU nt -> "shr_u " ^ num_type nt, []
-    | Ne nt -> "ne " ^ num_type nt, []
-    | Eqz nt -> "eqz " ^ num_type nt, []
+    | Add nt -> num_type nt ^ ".add", []
+    | Sub nt -> num_type nt ^ ".sub", []
+    | Mul nt -> num_type nt ^ ".mul", []
+    | Div nt -> num_type nt ^ ".div", []
+    | DivS nt -> num_type nt ^ ".div_s", []
+    | Shl nt -> num_type nt ^ ".shl", []
+    | Shr nt -> num_type nt ^ ".shr", []
+    | ShrU nt -> num_type nt ^ ".shr_u", []
+    | Ne nt -> num_type nt ^ ".ne", []
+    | Rem nt -> num_type nt ^ ".rem_s", []
+    | Eq nt -> num_type nt ^ ".eq", []
+    | Eqz nt -> num_type nt ^ ".eqz", []
+    | Neg nt -> num_type nt ^ ".neg", []
+    | Le nt -> num_type nt ^ ".le" ^ (suffix nt), []
+    | Lt nt -> num_type nt ^ ".lt" ^ (suffix nt), []
+    | Ge nt -> num_type nt ^ ".ge" ^ (suffix nt), []
+    | Gt nt -> num_type nt ^ ".gt" ^ (suffix nt), []
     | IntConst (nt, i) -> num_type nt ^ ".const " ^ string_of_int i, []
     | FloatConst (nt, f) -> num_type nt ^ ".const " ^ string_of_float f, []
   in Node (head, inner)

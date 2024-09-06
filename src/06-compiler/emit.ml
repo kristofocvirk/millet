@@ -238,7 +238,7 @@ let emit_func_deferred ctxt : int * _ =
       { ftype = typeidx;
         locals = get_entities ctxt'.int.locals;
         body = get_entities ctxt'.int.instrs;
-      } 
+      };
     )
 
 let emit_func ctxt ts1' ts2' f : int =

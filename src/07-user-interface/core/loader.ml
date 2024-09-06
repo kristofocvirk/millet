@@ -1,5 +1,6 @@
 open Utils
 module Ast = Language.Ast
+module Compiler = Compiler
 module Typed = Typechecker.TypedAst
 
 module Loader (Backend : Backend.S) = struct
@@ -7,7 +8,7 @@ module Loader (Backend : Backend.S) = struct
     desugarer : Desugarer.state;
     backend : Backend.load_state;
     typechecker : Typechecker.state;
-    cmds : Typed.command list
+    compiler : Compiler.comp_state
   }
 
   let load_primitive state prim =
@@ -21,7 +22,7 @@ module Loader (Backend : Backend.S) = struct
       desugarer = desugarer_state';
       typechecker = typechecker_state';
       backend = backend_state';
-      cmds = state.cmds;
+      compiler = {state.compiler with prims = (x, prim) :: state.compiler.prims}
     }
 
   let initial_state =
@@ -30,7 +31,7 @@ module Loader (Backend : Backend.S) = struct
         desugarer = Desugarer.initial_state;
         typechecker = Typechecker.initial_state;
         backend = Backend.initial_load_state;
-        cmds = []
+        compiler = {cmds = []; prims = []} 
       }
     in
 
@@ -58,7 +59,6 @@ module Loader (Backend : Backend.S) = struct
           state with
           typechecker = typechecker_state';
           backend = backend_state';
-          cmds = state.cmds @ [TyDef ty_defs]
         }
     | Ast.TopLet (x, expr) ->
         let typechecker_state', cmd =
@@ -69,12 +69,12 @@ module Loader (Backend : Backend.S) = struct
           state with
           typechecker = typechecker_state';
           backend = backend_state';
-          cmds = state.cmds @ [cmd]
+          compiler = {state.compiler with cmds = state.compiler.cmds @ [cmd]}
         }
     | Ast.TopDo comp ->
         let _, cmd = Typechecker.infer state.typechecker comp in
         let backend_state' = Backend.load_top_do state.backend comp in
-        { state with backend = backend_state'; cmds = state.cmds @ [TopDo cmd] }
+        { state with backend = backend_state'; compiler = {state.compiler with cmds = state.compiler.cmds @ [TopDo cmd]} }
 
   let load_commands state cmds =
     let desugarer_state', cmds' =

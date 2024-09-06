@@ -27,6 +27,11 @@ type ty =
   | TyArrow of ty * ty  (** [ty1 -> ty2] *)
   | TyTuple of ty list  (** [ty1 * ty2 * ... * tyn] *)
 
+let rec arity f = 
+  match f with 
+  | TyArrow (_, to_ty) -> 1 + arity to_ty
+  | _ -> 0
+
 let rec print_ty ?max_level print_param p ppf =
   let print ?at_level = Print.print ?max_level ?at_level ppf in
   match p with

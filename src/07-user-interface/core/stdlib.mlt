@@ -14,7 +14,7 @@ let ( +. ) x y = __float_add__ (x, y)
 let ( *. ) x y = __float_mul__ (x, y)
 let ( -. ) x y = __float_sub__ (x, y)
 let ( /. ) x y = __float_div__ (x, y)
-let ( ** ) x y = __float_pow__ (x, y)
+(*let ( ** ) x y = __float_pow__ (x, y)*)
 let ( ~-. ) x = __float_neg__ x
 
 let absurd void = (match void with)

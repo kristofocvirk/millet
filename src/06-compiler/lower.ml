@@ -5,18 +5,6 @@ module Source = Utils.Source
 module Const = Language.Const
 module Env = Env
 
-let prompt = ref false
-let interpret = ref false
-let compile = ref false
-let run = ref false
-let headless = ref false
-let unchecked = ref false
-let validate = ref false
-let textual = ref false
-let print_ast = ref false
-let print_sig = ref false
-let trace = ref false
-let width = ref 80
 let box_locals = ref false
 let box_globals = ref true
 let box_modules = ref true
@@ -26,7 +14,6 @@ let box_scrut = ref false
 type null = Null | Nonull
 
 type loc =
-  | PreLoc of int
   | LocalLoc of int
   | GlobalLoc of int
   | ClosureLoc of null * int * int * int (* fldidx, localidx, typeidx *)
@@ -69,13 +56,11 @@ let arg_rep = BoxedAbsRep Nonull    (* argument and result values *)
 let unit_rep = BlockRep Nonull      (* nothing on stack *)
 
 let loc_rep = function
-  | PreLoc _ -> rigid_rep
   | GlobalLoc _ -> global_rep ()
   | LocalLoc _ -> local_rep ()
   | ClosureLoc _ -> clos_rep ()
 
-
-let max_func_arity = 4
+let max_func_arity = 1
 
 let clos_arity_idx = 0
 let clos_code_idx = 1
@@ -131,6 +116,16 @@ let enter_scope ctxt scope : ctxt =
 let current_scope ctxt : scope * env ref =
   List.hd ctxt.ext.envs
 
+let rec find_typ_var ctxt y envs : data =
+  match envs with
+  | [] ->
+    Ast.TyName.print y Format.str_formatter;
+    Printf.printf "[find_typ_var `%s`]\n%!" (Format.flush_str_formatter ());
+    assert false
+  | (_, env)::envs' ->
+    match Env.find_opt_typ y !env with
+    | None -> find_typ_var ctxt y envs'
+    | Some {it = data; _} -> data
 
 (* Lowering types *)
 
@@ -150,11 +145,12 @@ let ref_ x = Types.RefT (Types.NoNull, Types.VarHT (Types.StatX x))
 let rec lower_value_type ctxt rep t : Types.val_type =
   match t, rep with
   | t, (BlockRep n | BoxedRep n) 
-  | (Ast.TyApply _ as t), BoxedAbsRep n -> RefT (lower_ref n (lower_heap_type ctxt t))
+  | (Ast.TyApply _ as t), BoxedAbsRep n -> RefT (lower_ref n (lower_heap_type ctxt t ))
   | _, BoxedAbsRep n -> RefT (lower_ref n abs)
   | Ast.TyConst Const.BooleanTy, _ -> NumT I32T 
   | Ast.TyConst Const.IntegerTy, _ -> NumT I32T 
   | Ast.TyConst Const.FloatTy, _ -> NumT F64T 
+  | Ast.TyParam _, _ -> RefT (NoNull, EqHT)
   | t, (UnboxedRep n | UnboxedLaxRep n) -> RefT (lower_ref n (lower_heap_type ctxt t))
   | _, DropRep -> assert false
 
@@ -178,10 +174,9 @@ and lower_sum_type ctxt t : int =
   emit_type ctxt (sub [Types.VarHT (Types.StatX anycon)] (Types.DefStructT (Types.StructT (field (Types.NumT Types.I32T) :: ft :: []))))
 
 and lower_inline_type ctxt t : int = 
-  let anycon = lower_anycon_type ctxt in
   let vt = lower_value_type ctxt field_rep t in
   let ft = (fun x -> Types.FieldT (Types.Cons, Types.ValStorageT x)) vt in
-  emit_type ctxt (sub [Types.VarHT (Types.StatX anycon)] (Types.DefStructT (Types.StructT (ft :: []))))
+  emit_type ctxt (sub [] (Types.DefStructT (Types.StructT (ft :: []))))
 
 and lower_ty_apply_type ctxt ts : int =
   if ts = [] then -1 else
@@ -191,11 +186,6 @@ and lower_ty_apply_type ctxt ts : int =
   emit_type ctxt (sub [Types.VarHT (Types.StatX anycon)] (Types.DefStructT (Types.StructT (field (Types.NumT Types.I32T) :: fts))))
 
 and lower_var_type ctxt t =
-  let rec arity f = 
-    match f with 
-    | Ast.TyArrow (_, to_ty) -> 1 + arity to_ty
-    | _ -> 0
-  in
   match t with
   | Ast.TyConst Const.FloatTy ->
     emit_type ctxt (sub [] (Types.DefStructT (Types.StructT [field (Types.NumT Types.F64T)])))
@@ -203,9 +193,11 @@ and lower_var_type ctxt t =
     let ts = List.map (lower_value_type ctxt field_rep) ts in
     emit_type ctxt (sub [] (Types.DefStructT  (Types.StructT (List.map field ts))))
   | Ast.TyArrow (_, _) as x -> 
-    let num_args = arity x in
+    let num_args = Ast.arity x in
     snd (lower_func_type ctxt num_args)
-  | _ -> Ast.print_ty (Ast.new_print_param ()) t Format.std_formatter; failwith "tyapply"
+  | Ast.TyApply _ -> Ast.print_ty (Ast.new_print_param ()) t Format.std_formatter; failwith "tyapply"
+  | Ast.TyParam _ -> Ast.print_ty (Ast.new_print_param ()) t Format.std_formatter; failwith "typaram"
+  | _ -> assert false
 
 and lower_anyclos_type ctxt : int =
   emit_type ctxt (sub [] (Types.DefStructT (Types.StructT [field (Types.NumT Types.I32T)])))
@@ -225,7 +217,7 @@ and lower_func_type ctxt arity : int * int =
     def_code codedt;
     let clos_idxs = {codeidx = code; closidx = clos; envidx = clos} in
     ctxt.ext.clostypes := ClosMap.add key clos_idxs !(ctxt.ext.clostypes);
-    code, clos
+    code, clos 
 
 and lower_clos_type ctxt arity flds : int * int * int =
   let argts, _ = lower_param_types ctxt arity in

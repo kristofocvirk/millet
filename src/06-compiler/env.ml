@@ -26,7 +26,7 @@ let empty =
   }
 
 let val_not_found x =
-  print_endline "I am going to fail :(";
+  print_endline "I am going to fail val :(";
   (Variable.print x Format.str_formatter);
   failwith (Format.flush_str_formatter ())
 
@@ -41,11 +41,12 @@ let lbl_not_found x =
   failwith (Format.flush_str_formatter ())
 
 let func_not_found x =
-  print_endline "I am going to fail :(";
+  print_endline "I am going to fail func :(";
   (Variable.print x Format.str_formatter);
   failwith (Format.flush_str_formatter ())
 
 let update_runs env = {env with runs = env.runs + 1}
+let get_runs env = env.runs
 
 let extend_val env x v = {env with vals = VariableMap.add x v env.vals}
 let extend_typ env x v = {env with typs = TyNameMap.add x v env.typs}
