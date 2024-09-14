@@ -1,0 +1,9 @@
+let rec last ls =
+   match ls with 
+   | _ :: xs -> last xs
+   | [x] -> x
+   | [] -> 0
+
+run
+ let a = [1;2;3] in
+   last a

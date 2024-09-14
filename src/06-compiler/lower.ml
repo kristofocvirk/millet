@@ -34,6 +34,14 @@ type rep =
   | UnboxedRep of null     (* representation with unboxed type or concrete ref types *)
   | UnboxedLaxRep of null  (* like Unboxed, but Int may have junk high bit *)
 
+let print_rep = function
+  | DropRep -> print_endline "DropRep"
+  | BlockRep _ -> print_endline "BlockRep"
+  | BoxedRep _ -> print_endline "BoxedRep"
+  | BoxedAbsRep _ -> print_endline "BoxedAbsRep"
+  | UnboxedRep _ -> print_endline "UnboxedRep"
+  | UnboxedLaxRep _ -> print_endline "UnboxedLaxRep"
+
 let null_rep = function
   | BlockRep n | BoxedRep n | BoxedAbsRep n | UnboxedRep n | UnboxedLaxRep n -> n
   | DropRep -> assert false
@@ -60,7 +68,7 @@ let loc_rep = function
   | LocalLoc _ -> local_rep ()
   | ClosureLoc _ -> clos_rep ()
 
-let max_func_arity = 1
+let max_func_arity = 4
 
 let clos_arity_idx = 0
 let clos_code_idx = 1
@@ -71,7 +79,7 @@ let clos_env_idx = 2  (* first environment entry *)
 
 type data_con = {tag : int; typeidx : int}
 type data = (Ast.label * data_con) list
-type env = (loc * func_loc option, data, func_loc) Env.env
+type env = (loc * func_loc option, data, Primitives.Primitives.primitive) Env.env
 type scope = PreScope | LocalScope | GlobalScope
 
 let make_env () =
@@ -192,7 +200,7 @@ and lower_var_type ctxt t =
   | Ast.TyTuple ts ->
     let ts = List.map (lower_value_type ctxt field_rep) ts in
     emit_type ctxt (sub [] (Types.DefStructT  (Types.StructT (List.map field ts))))
-  | Ast.TyArrow (_, _) as x -> 
+  | Ast.TyArrow _ as x -> 
     let num_args = Ast.arity x in
     snd (lower_func_type ctxt num_args)
   | Ast.TyApply _ -> Ast.print_ty (Ast.new_print_param ()) t Format.std_formatter; failwith "tyapply"
@@ -244,8 +252,7 @@ and lower_param_types ctxt arity : Types.val_type list * int option =
 
 and lower_block_type ctxt rep t : Types.block_type =
   match t, rep with
-  | _, DropRep
-  | Ast.TyTuple [], BlockRep _ -> Types.ValBlockType None 
+  | _, DropRep | Ast.TyTuple [], BlockRep _ -> Types.ValBlockType None 
   | t, _ -> ValBlockType (Some (lower_value_type ctxt rep t))
 
 

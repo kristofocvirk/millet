@@ -1,0 +1,8 @@
+type nat =
+  | Zero
+  | Succ of nat
+
+run 
+  match Succ Zero with 
+  | Zero -> 42
+  | Succ _ -> 1

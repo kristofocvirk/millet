@@ -1,0 +1,13 @@
+type nat =
+  | Zero
+  | Succ of nat
+
+let rec add m n =
+  match m with
+  | Zero -> n
+  | Succ m' -> Succ (add m' n)
+
+run
+  let six = (Succ (Succ (Succ (Succ (Succ (Succ Zero)))))) in
+  let seven = Succ six in
+  add six seven

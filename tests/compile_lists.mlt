@@ -1,5 +1,0 @@
-run 
-let a = [] in
-match a with 
-| [] -> 0
-| x :: xs -> x

@@ -20,7 +20,7 @@ ref.eq
 ref.is_null  ref.as_non_null  ref.as_i31  ref.as_data  ref.cast
 i31.new  
 struct.new  struct.get  struct.get_u  struct.set
-array.new  array.new_default  array.get  array.get_u  array.set  array.lens
+array.new  array.new_default  array.get  array.get_u  array.set  array.len
 ```
 
 

@@ -1,10 +1,16 @@
 type primitive =
-  | CompareEq
-  | CompareLt
-  | CompareGt
-  | CompareLe
-  | CompareGe
-  | CompareNe
+  | CompareIntEq
+  | CompareIntLt
+  | CompareIntGt
+  | CompareIntLe
+  | CompareIntGe
+  | CompareIntNe
+  | CompareFloatEq
+  | CompareFloatLt
+  | CompareFloatGt
+  | CompareFloatLe
+  | CompareFloatGe
+  | CompareFloatNe
   | IntegerAdd
   | IntegerMul
   | IntegerSub
@@ -22,12 +28,18 @@ type primitive =
 (* Keep this list up to date with the type above, otherwise the missing primitives will not be loaded *)
 let primitives =
   [
-    CompareEq;
-    CompareLt;
-    CompareGt;
-    CompareLe;
-    CompareGe;
-    CompareNe;
+    CompareIntEq;
+    CompareIntLt;
+    CompareIntGt;
+    CompareIntLe;
+    CompareIntGe;
+    CompareIntNe;
+    CompareFloatEq;
+    CompareFloatLt;
+    CompareFloatGt;
+    CompareFloatLe;
+    CompareFloatGe;
+    CompareFloatNe;
     IntegerAdd;
     IntegerMul;
     IntegerSub;
@@ -44,12 +56,18 @@ let primitives =
   ]
 
 let primitive_name = function
-  | CompareEq -> "__compare_eq__"
-  | CompareLt -> "__compare_lt__"
-  | CompareGt -> "__compare_gt__"
-  | CompareLe -> "__compare_le__"
-  | CompareGe -> "__compare_ge__"
-  | CompareNe -> "__compare_ne__"
+  | CompareIntEq -> "__compare_int_eq__"
+  | CompareIntLt -> "__compare_int_lt__"
+  | CompareIntGt -> "__compare_int_gt__"
+  | CompareIntLe -> "__compare_int_le__"
+  | CompareIntGe -> "__compare_int_ge__"
+  | CompareIntNe -> "__compare_int_ne__"
+  | CompareFloatEq -> "__compare_float_eq__"
+  | CompareFloatLt -> "__compare_float_lt__"
+  | CompareFloatGt -> "__compare_float_gt__"
+  | CompareFloatLe -> "__compare_float_le__"
+  | CompareFloatGe -> "__compare_float_ge__"
+  | CompareFloatNe -> "__compare_float_ne__"
   | IntegerAdd -> "__integer_add__"
   | IntegerMul -> "__integer_mul__"
   | IntegerSub -> "__integer_sub__"

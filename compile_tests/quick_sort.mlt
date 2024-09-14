@@ -1,0 +1,33 @@
+let rec partition x ls =
+  let rec aux x ls ls1 ls2 = 
+    match ls with 
+    | [] -> (ls1, ls2)
+    | hd :: tl -> 
+    if hd < x then
+      aux x tl (hd :: ls1) ls2
+    else 
+      aux x tl ls1 (hd :: ls2)
+  in 
+  aux x ls [] []
+
+
+let rec quicksort = function
+    | [] -> []
+    | x::xs -> let smaller, larger = partition x xs
+               in quicksort smaller @ (x::quicksort larger)
+              
+run 
+  let a = quicksort [7;6;5;4;3;2;1] in 
+  nth a 0
+
+run 
+  let a = quicksort [7;6;5;4;3;2;1] in 
+  nth a 1
+
+run 
+  let a = quicksort [7;6;5;4;3;2;1] in 
+  nth a 2
+
+run 
+  let a = quicksort [7;6;5;4;3;2;1] in 
+  nth a 3

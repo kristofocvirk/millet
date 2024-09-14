@@ -51,12 +51,12 @@ let main () =
       (let state = Loader.load_source Loader.initial_state Loader.stdlib_source
       in
       let state' = List.fold_left Loader.load_file state config.filenames in
-      Compiler.compile_prog state'.compiler state'.typechecker.type_definitions)
-      |> ignore
+      let out_str = Compiler.compile_prog state'.compiler state'.typechecker.type_definitions in
+      Loader.write_to_file (List.hd config.filenames) out_str)
     | (false, true) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
-      Compiler.compile_prog state'.compiler state'.typechecker.type_definitions)
-      |> ignore
+      let out_str = Compiler.compile_prog state'.compiler state'.typechecker.type_definitions in
+      Loader.write_to_file (List.hd config.filenames) out_str;)
     | (false, false) -> 
       (let state' = List.fold_left Loader.load_file Loader.initial_state config.filenames in
       let run_state = Backend.run state'.backend in

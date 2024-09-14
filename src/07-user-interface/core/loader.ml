@@ -91,6 +91,30 @@ module Loader (Backend : Backend.S) = struct
   let load_file state source =
     let cmds = Parser.Lexer.read_file parse_commands source in
     load_commands state cmds
+  
+  let write_to_file file prog =
+    let name = (Filename.basename file |> String.split_on_char '.' |> List.hd) ^ ".wat" in
+    let oc = open_out name in
+    (* create or truncate file, return channel *)
+    Printf.fprintf oc "%s\n" prog;
+    (* write something *)
+    close_out oc;
+
+    (* flush and close the channel *)
+
+    (* Read file and display the first line *)
+    let ic = open_in file in
+    try
+      (* write the result to stdout *)
+      flush stdout;
+      (* write on the underlying device now *)
+      close_in ic
+      (* close the input channel *)
+    with e ->
+      (* some unexpected exception occurs *)
+      close_in_noerr ic;
+      (* emergency closing *)
+      raise e
 
   (** The module Stdlib_mlt is automatically generated from stdlib.mlt. Check the dune file for details. *)
   let stdlib_source = Stdlib_mlt.contents

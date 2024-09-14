@@ -1,0 +1,69 @@
+(* Function to remove the i-th element from a list *)
+let rec remove_nth n lst = 
+  match lst with
+  | [] -> []
+  | x :: xs -> if n = 0 then xs else x :: remove_nth (n - 1) xs
+
+(* Function to calculate the minor matrix by removing the first row and j-th column *)
+(* Function to remove the nth element from a list *)
+let rec remove_nth n lst =
+  match lst with
+  | [] -> []
+  | x :: xs -> if n = 0 then xs else x :: remove_nth (n - 1) xs
+
+(* Function to calculate the minor matrix by removing the first row and the j-th column *)
+let rec minor_matrix matrix j =
+  let rec remove_col_from_rows rows =
+    match rows with
+    | [] -> []
+    | row :: rest -> remove_nth j row :: remove_col_from_rows rest
+  in
+  remove_col_from_rows (tl matrix)
+
+(* Recursive determinant function *)
+let rec determinant matrix =
+  match matrix with
+  | [] -> 0  (* If the matrix is empty, determinant is 0 *)
+  | [[x]] -> x  (* Base case for a 1x1 matrix *)
+  | _ ->
+    let rec cofactor_expansion row j acc =
+      match row with
+      | [] -> acc  (* No more elements in the row *)
+      | elem :: rest ->
+        let sign = if j mod 2 = 0 then 1 else -1 in
+        let minor_det = determinant (minor_matrix matrix j) in
+        let updated_acc = acc + (sign * elem * minor_det) in
+        cofactor_expansion rest (j + 1) updated_acc
+    in
+    cofactor_expansion (hd matrix) 0 0
+
+
+let matrix = [
+  [1; 2; 3];
+  [4; 5; 6];
+  [7; 8; 9]
+]
+
+let matrix3 = [
+  [1; 2; 1];
+  [0; 3; 4];
+  [3; 1; 4]
+]
+
+let matrix11 = [
+  [1; 2; 3];
+  [4; 5; 6];
+  [7; 8; 9]
+]
+
+let matrix12 = [
+  [9; 8; 7];
+  [6; 5; 4];
+  [3; 2; 1]
+]
+
+run 
+  (determinant matrix3)
+
+run 
+  (determinant matrix)

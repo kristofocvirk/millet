@@ -1,0 +1,51 @@
+let make_tuple3 a b c = 
+  (a,b,c)
+
+let make_tuple a b = 
+  (a,b)
+  
+let fst tup =
+  match tup with 
+  | (a,_) -> a  
+
+let snd tup =
+  match tup with 
+  | (_,b) -> b
+
+let fst3 tup =
+match tup with 
+  | (a,_,_) -> a
+
+let snd3 tup =
+match tup with 
+  | (_,b,_) -> b
+
+let trd3 tup =
+match tup with 
+  | (_,_,c) -> c
+
+run (make_tuple3 1 2 3)
+
+run (make_tuple 1 2)
+
+run (make_tuple 1 2)
+
+run 
+  (let tup = (make_tuple 1 2) in
+  fst tup)
+
+run 
+  (let tup = (make_tuple 1 2) in  
+  snd tup)
+
+run 
+  let tup = (make_tuple3 1 2 3) in
+  fst3 tup
+
+run 
+  let tup = (make_tuple3 1 2 3) in
+  snd3 tup
+
+run 
+  let tup = (make_tuple3 1 2 3) in
+  trd3 tup

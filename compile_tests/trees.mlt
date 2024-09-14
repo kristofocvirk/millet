@@ -1,0 +1,61 @@
+(* Define the tree data type *)
+type tree = 
+  | Empty 
+  | Node of int * tree * tree 
+
+(* Insert function: Inserts a value into the binary search tree *)
+let rec insert tree x = 
+  match tree with
+  | Empty -> Node (x, Empty, Empty)
+  | Node (y, l, r) ->
+     if x < y then Node (y, insert l x, r)
+     else Node (y, l, insert r x)
+
+(* Construct function: Manually constructs a binary search tree from a list *)
+let rec construct acc = function
+  | [] -> acc
+  | y :: ys -> construct (insert acc y) ys
+
+(* Function to count the leaves of a tree *)
+let rec count_leaves = function
+  | Empty -> 1
+  | Node (_, Empty, Empty) -> 1  (* A leaf is a node with no children *)
+  | Node (_, l, r) -> count_leaves l + count_leaves r
+
+(* Function to count the nodes of a tree *)
+let rec count_nodes = function
+  | Empty -> 0
+  | Node (_, l, r) -> 1 + count_nodes l + count_nodes r  
+
+let rec height = function
+  | Empty -> 0
+  | Node (_, l, r) -> 
+    let hl = height l in
+    let hr = height r in
+    if hl > hr then 
+      hl + 1
+    else 
+      hr + 1
+
+run 
+  let tree = construct Empty [1; 2; 4; 1; 5; 2; 2; 5; 2; 3; 7; 2; 9] in
+  count_leaves tree
+
+run 
+  let tree = construct Empty [1; 2; 4; 1; 5; 2; 2; 5; 2; 3; 7; 2; 9] in
+  count_nodes tree
+
+run  
+  length [1; 2; 4; 1; 5; 2; 2; 5; 2; 3; 7; 2; 9]
+
+run 
+  construct Empty [1; 2; 4; 1; 5; 2; 2; 5; 2; 3; 7; 2; 9]
+
+run 
+  let tree = construct Empty [1; 2; 4; 1; 5; 2; 2; 5; 2; 3; 7; 2; 9] in
+  height tree
+
+run 
+  let list = range 0 99 in 
+  let tree = construct Empty list in
+  height tree

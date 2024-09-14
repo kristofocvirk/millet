@@ -1,9 +1,15 @@
-let ( = ) x y = __compare_eq__ (x, y)
-let ( < ) x y = __compare_lt__ (x, y)
-let ( > ) x y = __compare_gt__ (x, y)
-let ( <= ) x y = __compare_le__ (x, y)
-let ( >= ) x y = __compare_ge__ (x, y)
-let ( <> ) x y = __compare_ne__ (x, y)
+let ( = ) x y = __compare_int_eq__ (x, y)
+let ( < ) x y = __compare_int_lt__ (x, y)
+let ( > ) x y = __compare_int_gt__ (x, y)
+let ( <= ) x y = __compare_int_le__ (x, y)
+let ( >= ) x y = __compare_int_ge__ (x, y)
+let ( <> ) x y = __compare_int_ne__ (x, y)
+let ( =. ) x y = __compare_float_eq__ (x, y)
+let ( <. ) x y = __compare_float_lt__ (x, y)
+let ( >. ) x y = __compare_float_gt__ (x, y)
+let ( <=. ) x y = __compare_float_le__ (x, y)
+let ( >=. ) x y = __compare_float_ge__ (x, y)
+let ( <>. ) x y = __compare_float_ne__ (x, y)
 let ( + ) x y = __integer_add__ (x, y)
 let ( * ) x y = __integer_mul__ (x, y)
 let ( - ) x y = __integer_sub__ (x, y)
@@ -70,7 +76,7 @@ let rec fold_right f xs acc =
       let acc' = fold_right f xs acc in
       f x acc'
     
-    let rec iter f = function
+let rec iter f = function
   | [] -> ()
   | x :: xs -> f x; iter f xs
 
@@ -110,8 +116,9 @@ let rec length = function
   | [] -> 0
   | x :: xs -> length xs + 1
 
-let rec nth (x::xs) n =
-  if n = 0 then x else nth xs (n - 1)
+let rec nth ls n =
+  match ls with
+  | x :: xs -> if n = 0 then x else nth xs (n - 1)
 
 (* Basic functions *)
 let abs x = if x < 0 then -x else x

@@ -57,6 +57,7 @@ type instr =
   (* globals *)
   | GlobalGet of int
   | GlobalSet of int
+
   (* Parametric instucrions *)
   | Drop
 

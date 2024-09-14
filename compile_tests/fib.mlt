@@ -1,0 +1,8 @@
+let rec fact n =
+  if n = 0 then 1 else n * fact (n - 1)
+
+let rec aux n a b =
+    if n = 0 then a else aux (n - 1) b (a + b)
+
+run (aux 100 0 1) 
+(*run (fact 10)*)

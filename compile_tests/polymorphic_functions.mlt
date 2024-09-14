@@ -12,6 +12,18 @@ let rec gcd_rec m n =
   | 0 -> m
   | _ -> gcd_rec n (m mod n)
 
+let binary_op f a b =
+    f a b
+
+let unary_op f a =
+    f a 
+
 run (gcd_rec (fib 20) (fact 11))
 
 run fib 20
+
+run 
+    binary_op ( + ) 1 2
+
+run 
+    unary_op ( ~- ) 1

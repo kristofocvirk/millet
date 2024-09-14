@@ -1,0 +1,154 @@
+(* Type definition for a graph as an adjacency list with weighted edges. *)
+type graph = (int * (int * int) list) list
+
+let graph = [
+  (0, [(1, 1); (2, 4)]);
+  (1, [(2, 2); (3, 6)]);
+  (2, [(3, 3)]);
+  (3, [])
+]
+
+let graph10 = [
+  (0, [(1, 5); (2, 2)]);
+  (1, [(3, 8); (4, 1)]);
+  (2, [(5, 7); (6, 3)]);
+  (3, [(7, 4)]);
+  (4, [(5, 2)]);
+  (5, [(8, 6)]);
+  (6, [(9, 10)]);
+  (7, [(9, 1)]);
+  (8, [(9, 2)]);
+  (9, [])
+]
+
+let graph15 = [
+  (0, [(1, 3); (2, 6)]);
+  (1, [(3, 5); (4, 9)]);
+  (2, [(5, 4); (6, 8)]);
+  (3, [(7, 2)]);
+  (4, [(8, 7)]);
+  (5, [(9, 1)]);
+  (6, [(10, 2)]);
+  (7, [(11, 3)]);
+  (8, [(12, 4)]);
+  (9, [(13, 6)]);
+  (10, [(14, 1)]);
+  (11, [(12, 5)]);
+  (12, [(14, 7)]);
+  (13, [(14, 3)]);
+  (14, [])
+]
+
+let graph20 = [
+  (0, [(1, 2); (3, 3)]);
+  (1, [(4, 5); (5, 1)]);
+  (2, [(6, 8)]);
+  (3, [(7, 4); (8, 7)]);
+  (4, [(9, 6); (10, 2)]);
+  (5, [(11, 4); (12, 9)]);
+  (6, [(13, 7)]);
+  (7, [(14, 3)]);
+  (8, [(15, 2)]);
+  (9, [(16, 8)]);
+  (10, [(17, 5)]);
+  (11, [(18, 10)]);
+  (12, [(19, 1)]);
+  (13, [(16, 4)]);
+  (14, [(17, 6)]);
+  (15, [(18, 7)]);
+  (16, [(19, 3)]);
+  (17, [(19, 2)]);
+  (18, [(19, 4)]);
+  (19, [])
+]
+
+(* Helper function to get neighbors and edge weights of a node *)
+let rec neighbors g node =
+  match g with
+  | [] -> []
+  | (n, edges)::rest ->
+    if n = node then edges else neighbors rest node
+
+(* Helper function to get the distance of a node from the list *)
+let rec get_distance distances node =
+  match distances with
+  | [] -> -1 
+  | hd::tl ->
+    if node = 0 then hd else get_distance tl (node - 1)
+
+(* Helper function to update the distance of a node in the list *)
+let rec update_distance distances node new_dist =
+  match distances with
+  | [] -> [] 
+  | hd::tl ->
+    if node = 0 then new_dist::tl
+    else hd::(update_distance tl (node - 1) new_dist)
+
+(* Helper function to insert an element in sorted order in the priority queue *)
+let rec insert_sorted pq (dist, node) =
+  match pq with
+  | [] -> [(dist, node)]
+  | (d, n)::rest ->
+    if dist < d then (dist, node)::pq
+    else (d, n)::(insert_sorted rest (dist, node))
+
+(* Recursive function to process neighbors of the current node *)
+let rec process_neighbors neighbors_list dist node pq distances =
+  match neighbors_list with
+  | [] -> (pq, distances)
+  | (neighbor, weight)::rest ->
+    let new_dist = dist + weight in
+    let old_dist = get_distance distances neighbor in
+    if new_dist < old_dist then
+      let updated_dists = update_distance distances neighbor new_dist in
+      let updated_pq = insert_sorted pq (new_dist, neighbor) in
+      process_neighbors rest dist node updated_pq updated_dists
+    else
+      process_neighbors rest dist node pq distances
+
+(* Dijkstra's algorithm without using List module functions *)
+let rec dijkstra_aux pq distances graph =
+  match pq with
+  | [] -> distances (* If the queue is empty, return the distances *)
+  | (dist, node)::rest ->
+    let neighbors_list = neighbors graph node in
+    let new_pq, new_distances = process_neighbors neighbors_list dist node rest distances in
+    dijkstra_aux new_pq new_distances graph
+
+let dijkstra graph start num_nodes =
+  (* Initialize distances: start node has distance 0, others have max_int *)
+  let rec init_distances n =
+    if n = 0 then [] else 1000000 :: init_distances (n - 1)
+  in
+  let initial_distances = update_distance (init_distances num_nodes) start 0 in
+  dijkstra_aux [(0, start)] initial_distances graph
+
+(* Example usage *)
+
+run
+  dijkstra graph 0 4
+  
+(*run
+  let ls = dijkstra graph 0 4 in
+  nth ls 0
+
+run
+  let ls = dijkstra graph 0 4 in
+  nth ls 1
+
+run
+  let ls = dijkstra graph 0 4 in
+  nth ls 2
+
+run
+  let ls = dijkstra graph 0 4 in
+  nth ls 3
+
+run
+  dijkstra graph10 0 10 
+
+run
+  dijkstra graph15 0 15
+
+run
+  dijkstra graph20 0 20 *)

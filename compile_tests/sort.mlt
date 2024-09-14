@@ -1,0 +1,81 @@
+let rec nth ls n =
+  match ls with 
+  | x :: xs -> if n = 0 then x else nth xs (n - 1)
+  | [] -> -1
+
+let rec range m n =
+  if m > n then
+    []
+  else
+    m :: range (m + 1) n
+
+let rec check_elems ls x =
+  match ls with 
+  | hd :: tl -> 
+    let b = x <= hd in
+    if b then 
+      check_elems tl x 
+    else 
+      false
+  | [hd] -> x <= hd
+  | [] -> true
+
+let rec is_sorted ls = 
+  match ls with 
+  | x :: xs -> 
+  let b = check_elems xs x in 
+  if b then 
+    is_sorted xs 
+  else 
+    false 
+  | [x] -> true
+  | [] -> true
+
+let rec sort_once lst = 
+  match lst with
+  | hd1 :: hd2 :: tl ->
+      if hd1 > hd2 then
+          hd2 :: sort_once (hd1 :: tl)
+      else
+          hd1 :: sort_once (hd2 :: tl)
+  | tl -> tl
+
+let rec sort lst =
+    let sorted = sort_once lst in
+    let b = is_sorted sorted in 
+    if b then
+      sorted 
+    else
+      sort sorted 
+
+run 
+  let sorted = sort [6;5;4;3;2;1] in 
+  nth sorted 0
+
+run 
+  let sorted = sort [6;5;4;3;2;1] in 
+  nth sorted 1
+
+run 
+  let sorted = sort [6;5;4;3;2;1] in 
+  nth sorted 2
+
+run 
+  let sorted = sort [6;5;4;3;2;1] in 
+  nth sorted 3
+
+run 
+  let sorted = sort [6;5;4;3;2;1] in 
+  nth sorted 4
+
+run 
+  let sorted = sort [6;5;4;3;2;1] in 
+  nth sorted 5
+
+run 
+  let a = range 0 30 in
+  let rev = reverse a in
+  let sorted = sort rev in 
+  nth sorted 5
+
+  
