@@ -33,6 +33,6 @@ let n_queens_count n =
 
 (* Example usage *)
 run
-  let n = 10 in
+  let n = 8 in
   let solution_count = n_queens_count n in
   solution_count

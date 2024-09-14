@@ -275,16 +275,3 @@ let steps = function
               (fun () -> { computations = comp' () :: comps; environment });
           })
         (step_computation environment comp)
-
-
-
-let compile run_state = 
-  (match run_state with
-  | { computations = []; _ } -> print_endline "wasm_unit"
-  | { computations = Ast.Return x :: comps; environment } ->
-    ignore (x, comps);
-    Ast.VariableMap.iter (fun x exp -> print_endline ((Ast.string_of_expression (Ast.Var x)) ^ ": " ^ (Ast.string_of_expression exp) ^ "\n")) environment.variables 
-  | { computations = comp :: comps; environment } ->
-    ignore (comp, comps);
-    Ast.VariableMap.iter (fun x exp -> print_endline ((Ast.string_of_expression (Ast.Var x)) ^ ": " ^ (Ast.string_of_expression exp) ^ "\n")) environment.variables 
-  )
