@@ -72,11 +72,11 @@ let benchmark trials f =
       times.(i) <- stop -. start;
       results.(i) <- Some result
     done;
-    let avg_time = mean times in
-    let std_dev = standard_deviation times in
+    let avg_time = (mean times) *. 1000. in
+    let std_dev = (standard_deviation times) *. 1000. in
     Printf.printf "Trials: %d\n" trials;
-    Printf.printf "Mean execution time: %.6f seconds\n" avg_time;
-    Printf.printf "Standard deviation: %.6f seconds\n" std_dev
+    Printf.printf "Mean execution time: %.4f ms\n" avg_time;
+    Printf.printf "Standard deviation: %.4f ms\n" std_dev
 
 
 let main () =

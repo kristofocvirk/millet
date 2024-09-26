@@ -418,8 +418,8 @@ let rec compile_func_apply arity ctxt =
         StructNew (curriedN, Explicit);
       ]
     ) in 
-    print_endline ("func_apply" ^ string_of_int arity);
-    print_endline (string_of_int func_idx);
+    (*print_endline ("func_apply" ^ string_of_int arity);
+    print_endline (string_of_int func_idx);*)
     func_idx 
   ) 
 
@@ -752,7 +752,7 @@ let rec classify_pat p =
     match p.it with
     | Typed.PVar _ -> TotalPat 
     | Typed.PAnnotated (p1, _) -> classify_pat p1
-    | Typed.PAs (p1, _) -> classify_pat p1
+    | Typed.PAs (p1, _) -> max (classify_pat p1) TotalPat
     | Typed.PTuple ps -> List.fold_left max IrrelevantPat (List.map classify_pat ps)
     | Typed.PVariant _ -> PartialPat
     | Typed.PConst _ -> PartialPat 
@@ -995,6 +995,7 @@ and compile_computation ctxt comp dst =
     (match classify_pat pat with
     | IrrelevantPat ->
       ignore (compile_computation ctxt compute Lower.rigid_rep);
+      emit ctxt [Drop];
       (compile_computation ctxt cont dst)
     | TotalPat ->
       let ctxt' = Lower.enter_scope ctxt LocalScope in

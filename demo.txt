@@ -1,0 +1,7 @@
+./cli.exe compile_tests/queens.mlt
+
+./cli.exe --compile compile_tests/queens.mlt 
+
+../wasm_upstream/gc/interpreter/wasm -d queens.wat -o queens.wasm
+
+node js/test_fetch.js queens.wasm

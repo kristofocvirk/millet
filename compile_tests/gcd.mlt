@@ -1,0 +1,6 @@
+let rec gcd_rec m n =
+  match n with
+  | 0 -> m
+  | _ -> gcd_rec n (m mod n)
+
+run (gcd_rec 514229 433494437)

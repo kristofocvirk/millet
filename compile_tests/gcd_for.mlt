@@ -12,4 +12,9 @@ let rec gcd_rec m n =
   | 0 -> m
   | _ -> gcd_rec n (m mod n)
 
-run (gcd_rec (fib 10) (fact 10))
+let rec for_gcd n =
+  let _ = gcd_rec (fib 10) (fact 10) in
+  if n = 1 then (gcd_rec (fib 10) (fact 10)) else for_gcd (n-1)
+
+run 
+  for_gcd 1000

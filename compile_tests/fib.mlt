@@ -1,10 +1,7 @@
-let rec fact n =
-  if n = 0 then 1 else n * fact (n - 1)
-
 let rec aux n a b =
     if n = 0 then a else aux (n - 1) b (a + b)
 
 let fib n = 
   aux n 0 1
 
-run fib 100
+run fib 1000 

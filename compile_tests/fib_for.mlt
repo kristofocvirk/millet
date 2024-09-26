@@ -1,0 +1,12 @@
+let rec aux n a b =
+    if n = 0 then a else aux (n - 1) b (a + b)
+
+let fib n = 
+  aux n 0 1
+
+let rec for_fib n =
+  let _ = fib 10 in
+  if n = 1 then (fib 10) else for_fib (n-1)
+
+run 
+  for_fib 1000

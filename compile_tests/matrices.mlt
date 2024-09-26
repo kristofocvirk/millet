@@ -39,31 +39,12 @@ let rec determinant matrix =
 
 
 let matrix = [
-  [1; 2; 3];
-  [4; 5; 6];
-  [7; 8; 9]
+  [2; 1; 3; 4; 5];
+  [4; 2; 1; 3; 2];
+  [1; 3; 2; 2; 4];
+  [1; 2; 3; 4; 5];
+  [3; 1; 5; 2; 5]
 ]
-
-let matrix3 = [
-  [1; 2; 1];
-  [0; 3; 4];
-  [3; 1; 4]
-]
-
-let matrix11 = [
-  [1; 2; 3];
-  [4; 5; 6];
-  [7; 8; 9]
-]
-
-let matrix12 = [
-  [9; 8; 7];
-  [6; 5; 4];
-  [3; 2; 1]
-]
-
-run 
-  (determinant matrix3)
 
 run 
   (determinant matrix)

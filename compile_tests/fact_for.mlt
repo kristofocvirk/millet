@@ -1,0 +1,9 @@
+let rec fact n =
+  if n = 0 then 1 else n * fact (n - 1)
+
+let rec for_fact n =
+  let _ = fact 10 in
+  if n = 1 then (fact 10) else for_fact (n-1)
+
+run 
+  for_fact 1000
